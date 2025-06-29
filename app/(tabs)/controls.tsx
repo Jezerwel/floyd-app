@@ -110,11 +110,11 @@ export default function ControlsScreen() {
               ]}
               onPress={handleLeftPaddleToggle}
             >
-              <IconSymbol
+              {/* <IconSymbol
                 name="arrow.clockwise"
                 size={32}
                 color={leftPaddleOn ? "white" : colors.muted}
-              />
+              /> */}
               <Text
                 style={[
                   styles.paddleTitle,
@@ -144,11 +144,11 @@ export default function ControlsScreen() {
               ]}
               onPress={handleRightPaddleToggle}
             >
-              <IconSymbol
+              {/* <IconSymbol
                 name="arrow.counterclockwise"
                 size={32}
                 color={rightPaddleOn ? "white" : colors.muted}
-              />
+              /> */}
               <Text
                 style={[
                   styles.paddleTitle,

@@ -3,6 +3,7 @@ import { CircularProgress } from "@/components/ui/CircularProgress";
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { StatCard } from "@/components/ui/StatCard";
 import { Colors } from "@/constants/Colors";
+import useAlerts from "@/hooks/useAlerts";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useESP8266 } from "@/hooks/useESP8266Context";
 import { StatusBar } from "expo-status-bar";
@@ -23,6 +24,10 @@ export default function DashboardScreen() {
 
   // ESP8266 context for real sensor data
   const { deviceData, isConnected, requestSensorData } = useESP8266();
+
+  // Dynamic alerts system
+  const { alerts, alertCount, hasHighSeverityAlerts, hasMediumSeverityAlerts } =
+    useAlerts();
 
   // Local state for UI controls
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -46,14 +51,21 @@ export default function DashboardScreen() {
     return () => clearInterval(interval);
   }, [isConnected, requestSensorData]);
 
-  // Get real sensor values or fallback to defaults
-  const temperature = deviceData.temperature ?? 24.5;
-  const foodLevel = deviceData.foodLevelPercentage ?? 75;
-  const distance = deviceData.distance ?? 5.2;
+  // Get real sensor values or fallback based on connection status
+  const temperature = isConnected ? deviceData.temperature ?? 24.5 : null;
+  const foodLevel = isConnected ? deviceData.foodLevelPercentage ?? 75 : null;
+  const distance = isConnected ? deviceData.distance ?? 5.2 : null;
   const isTemperatureSensorConnected =
-    deviceData.temperatureSensorConnected ?? false;
+    isConnected && (deviceData.temperatureSensorConnected ?? false);
   const isUltrasonicSensorConnected =
-    deviceData.ultrasonicSensorConnected ?? false;
+    isConnected && (deviceData.ultrasonicSensorConnected ?? false);
+
+  // Determine alert section color based on severity
+  const getAlertSectionColor = () => {
+    if (hasHighSeverityAlerts) return colors.error;
+    if (hasMediumSeverityAlerts) return colors.warning;
+    return colors.success;
+  };
 
   return (
     <SafeAreaView
@@ -130,13 +142,16 @@ export default function DashboardScreen() {
           color={colors.primary}
         >
           <View style={styles.capacityContainer}>
-            <CircularProgress percentage={foodLevel} color={colors.primary} />
+            <CircularProgress
+              percentage={foodLevel ?? 0}
+              color={colors.primary}
+            />
             <View style={styles.capacityInfo}>
               <Text style={[styles.capacityLabel, { color: colors.muted }]}>
                 Food Remaining
               </Text>
               <Text style={[styles.capacityValue, { color: colors.text }]}>
-                {foodLevel.toFixed(1)}%
+                {foodLevel !== null ? `${foodLevel.toFixed(1)}%` : "--"}
               </Text>
               <View style={styles.sensorInfo}>
                 <View style={styles.alertRow}>
@@ -163,7 +178,8 @@ export default function DashboardScreen() {
                       },
                     ]}
                   >
-                    Distance: {distance.toFixed(1)} cm
+                    Distance:{" "}
+                    {distance !== null ? `${distance.toFixed(1)} cm` : "--"}
                   </Text>
                 </View>
                 <View style={styles.alertRow}>
@@ -172,9 +188,6 @@ export default function DashboardScreen() {
                     size={14}
                     color={colors.success}
                   />
-                  <Text style={[styles.alertText, { color: colors.success }]}>
-                    All alerts enabled by default
-                  </Text>
                 </View>
               </View>
             </View>
@@ -185,8 +198,8 @@ export default function DashboardScreen() {
         <View style={styles.statsRow}>
           <StatCard
             title="Water Temp"
-            value={temperature.toFixed(1)}
-            unit="°C"
+            value={temperature !== null ? temperature.toFixed(1) : "--"}
+            unit={temperature !== null ? "°C" : ""}
             icon="thermometer"
             color={
               isTemperatureSensorConnected ? colors.secondary : colors.error
@@ -216,30 +229,39 @@ export default function DashboardScreen() {
           </StatCard>
         </View>
 
-        {/* Recent Alerts */}
-        <StatCard title="Recent Alerts" icon="bell" color={colors.warning}>
+        {/* Dynamic Alerts */}
+        <StatCard
+          title={`Alerts ${alertCount > 0 ? `(${alertCount})` : ""}`}
+          icon="bell"
+          color={getAlertSectionColor()}
+        >
           <View style={styles.alertsContainer}>
-            <AlertItem
-              type="LOW_FOOD"
-              message="Food level dropped to 15%. Consider refilling soon."
-              timestamp="2 hours ago"
-              severity="MEDIUM"
-              isResolved={false}
-            />
-            <AlertItem
-              type="TEMPERATURE"
-              message="Water temperature reached 32°C. Check conditions."
-              timestamp="5 hours ago"
-              severity="LOW"
-              isResolved={true}
-            />
-            <AlertItem
-              type="SYSTEM"
-              message="Ultrasonic sensor reconnected successfully."
-              timestamp="1 day ago"
-              severity="LOW"
-              isResolved={true}
-            />
+            {alerts.length > 0 ? (
+              alerts.map((alert) => (
+                <AlertItem
+                  key={alert.id}
+                  type={alert.type}
+                  message={alert.message}
+                  timestamp={alert.timestamp}
+                  severity={alert.severity}
+                  isResolved={alert.isResolved}
+                />
+              ))
+            ) : (
+              <View style={styles.noAlertsContainer}>
+                <IconSymbol
+                  name="checkmark.circle.fill"
+                  size={32}
+                  color={colors.success}
+                />
+                <Text style={[styles.noAlertsText, { color: colors.success }]}>
+                  All systems normal
+                </Text>
+                <Text style={[styles.noAlertsSubtext, { color: colors.muted }]}>
+                  No active alerts at this time
+                </Text>
+              </View>
+            )}
           </View>
         </StatCard>
 
@@ -368,6 +390,18 @@ const styles = StyleSheet.create({
   },
   alertsContainer: {
     gap: 12,
+  },
+  noAlertsContainer: {
+    alignItems: "center",
+    paddingVertical: 24,
+    gap: 8,
+  },
+  noAlertsText: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  noAlertsSubtext: {
+    fontSize: 14,
   },
   bottomSpacing: {
     height: 100,

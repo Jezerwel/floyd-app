@@ -41,7 +41,7 @@ export default function TabLayout() {
         options={{
           title: "Controls",
           tabBarIcon: ({ color }) => (
-            <IconSymbol size={28} name="gearshape.2.fill" color={color} />
+            <IconSymbol size={28} name="gearshape.fill" color={color} />
           ),
         }}
       />
@@ -50,7 +50,7 @@ export default function TabLayout() {
         options={{
           title: "Temperature",
           tabBarIcon: ({ color }) => (
-            <IconSymbol size={28} name="thermometer.sun.fill" color={color} />
+            <IconSymbol size={28} name="thermometer" color={color} />
           ),
         }}
       />
