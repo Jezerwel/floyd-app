@@ -34,7 +34,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
         }
-      ]
+      ],
+      ["@prisma/react-native"]
     ],
     "experiments": {
       "typedRoutes": true
