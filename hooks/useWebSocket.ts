@@ -19,6 +19,11 @@ export interface WebSocketState {
   connectionAttempts: number;
 }
 
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_DELAY = 3000;
+const CONNECTION_TIMEOUT = 10000; // 10 seconds
+const HEARTBEAT_INTERVAL = 30000; // 30 seconds
+
 const useWebSocket = (url: string | null) => {
   const [state, setState] = useState<WebSocketState>({
     isConnected: false,
@@ -29,10 +34,10 @@ const useWebSocket = (url: string | null) => {
   });
 
   const websocketRef = useRef<WebSocket | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const heartbeatTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const maxReconnectAttempts = 5;
-  const reconnectDelay = 3000;
+  const reconnectTimeoutRef = useRef<any>(null);
+  const heartbeatTimeoutRef = useRef<any>(null);
+  const connectionTimeoutRef = useRef<any>(null);
+  const connectionAttemptsRef = useRef(0);
 
   const cleanup = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -42,6 +47,10 @@ const useWebSocket = (url: string | null) => {
     if (heartbeatTimeoutRef.current) {
       clearTimeout(heartbeatTimeoutRef.current);
       heartbeatTimeoutRef.current = null;
+    }
+    if (connectionTimeoutRef.current) {
+      clearTimeout(connectionTimeoutRef.current);
+      connectionTimeoutRef.current = null;
     }
     if (websocketRef.current) {
       websocketRef.current.close();
@@ -55,17 +64,22 @@ const useWebSocket = (url: string | null) => {
     }
 
     heartbeatTimeoutRef.current = setTimeout(() => {
-      if (websocketRef.current?.readyState === WebSocket.OPEN) {
+      // Check if component is still mounted before sending heartbeat
+      if (
+        isMountedRef.current &&
+        websocketRef.current?.readyState === WebSocket.OPEN
+      ) {
         websocketRef.current.send(JSON.stringify({ action: "ping" }));
         startHeartbeat(); // Schedule next heartbeat
       }
-    }, 30000); // Send ping every 30 seconds
+    }, HEARTBEAT_INTERVAL);
   }, []);
 
-  const connect = useCallback(() => {
-    if (!url) return;
+  // Use a ref to break circular dependency
+  const connectInternalRef = useRef<(() => void) | null>(null);
 
-    if (state.connectionAttempts >= maxReconnectAttempts) {
+  const attemptReconnect = useCallback(() => {
+    if (connectionAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
       setState((prev) => ({
         ...prev,
         error: "Maximum reconnection attempts reached",
@@ -73,6 +87,22 @@ const useWebSocket = (url: string | null) => {
       }));
       return;
     }
+
+    reconnectTimeoutRef.current = setTimeout(() => {
+      // Only attempt reconnect if component is still mounted
+      if (isMountedRef.current && connectInternalRef.current) {
+        connectionAttemptsRef.current++;
+        setState((prev) => ({
+          ...prev,
+          connectionAttempts: connectionAttemptsRef.current,
+        }));
+        connectInternalRef.current();
+      }
+    }, RECONNECT_DELAY);
+  }, []);
+
+  const connectInternal = useCallback(() => {
+    if (!url) return;
 
     setState((prev) => ({
       ...prev,
@@ -83,9 +113,25 @@ const useWebSocket = (url: string | null) => {
     try {
       cleanup();
 
+      // Set connection timeout
+      connectionTimeoutRef.current = setTimeout(() => {
+        setState((prev) => ({
+          ...prev,
+          error: "Connection timeout",
+          isConnecting: false,
+        }));
+        cleanup();
+      }, CONNECTION_TIMEOUT);
+
       websocketRef.current = new WebSocket(url);
 
       websocketRef.current.onopen = () => {
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+
+        connectionAttemptsRef.current = 0;
         setState((prev) => ({
           ...prev,
           isConnected: true,
@@ -99,6 +145,10 @@ const useWebSocket = (url: string | null) => {
       websocketRef.current.onmessage = (event) => {
         try {
           const message: ESP8266Message = JSON.parse(event.data);
+          // Validate message structure
+          if (!message.type || typeof message.type !== "string") {
+            throw new Error("Invalid message format: missing or invalid type");
+          }
           setState((prev) => ({
             ...prev,
             lastMessage: message,
@@ -108,13 +158,19 @@ const useWebSocket = (url: string | null) => {
           console.error("Failed to parse WebSocket message:", error);
           setState((prev) => ({
             ...prev,
-            error: "Failed to parse message from ESP8266",
+            error: `Failed to parse message: ${
+              error instanceof Error ? error.message : "Unknown error"
+            }`,
           }));
         }
       };
 
       websocketRef.current.onerror = (error) => {
         console.error("WebSocket error:", error);
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
         setState((prev) => ({
           ...prev,
           error: "Connection error occurred",
@@ -124,21 +180,20 @@ const useWebSocket = (url: string | null) => {
       };
 
       websocketRef.current.onclose = () => {
+        if (connectionTimeoutRef.current) {
+          clearTimeout(connectionTimeoutRef.current);
+          connectionTimeoutRef.current = null;
+        }
+
         setState((prev) => ({
           ...prev,
           isConnected: false,
           isConnecting: false,
         }));
 
-        // Auto-reconnect if connection was established before
-        if (state.connectionAttempts < maxReconnectAttempts) {
-          reconnectTimeoutRef.current = setTimeout(() => {
-            setState((prev) => ({
-              ...prev,
-              connectionAttempts: prev.connectionAttempts + 1,
-            }));
-            connect();
-          }, reconnectDelay);
+        // Auto-reconnect if we haven't exceeded max attempts
+        if (connectionAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
+          attemptReconnect();
         }
       };
     } catch (error) {
@@ -148,10 +203,19 @@ const useWebSocket = (url: string | null) => {
         isConnecting: false,
       }));
     }
-  }, [url, state.connectionAttempts, cleanup, startHeartbeat]);
+  }, [url, cleanup, startHeartbeat, attemptReconnect]);
+
+  // Assign connectInternal to ref to break circular dependency
+  connectInternalRef.current = connectInternal;
+
+  const connect = useCallback(() => {
+    connectionAttemptsRef.current = 0;
+    connectInternal();
+  }, [connectInternal]);
 
   const disconnect = useCallback(() => {
     cleanup();
+    connectionAttemptsRef.current = 0;
     setState({
       isConnected: false,
       isConnecting: false,
@@ -183,30 +247,43 @@ const useWebSocket = (url: string | null) => {
     } catch (error) {
       setState((prev) => ({
         ...prev,
-        error: "Failed to send command",
+        error: `Failed to send command: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
       }));
       return false;
     }
   }, []);
 
   const resetConnection = useCallback(() => {
+    connectionAttemptsRef.current = 0;
     setState((prev) => ({
       ...prev,
       connectionAttempts: 0,
       error: null,
     }));
     if (url) {
-      connect();
+      connectInternal();
     }
-  }, [url, connect]);
+  }, [url, connectInternal]);
+
+  // Fix race condition by using refs to track if component is mounted
+  const isMountedRef = useRef(true);
 
   useEffect(() => {
+    // Mark as mounted when effect runs
+    isMountedRef.current = true;
+
     if (url) {
       connect();
     }
 
-    return cleanup;
-  }, [url, connect, cleanup]);
+    return () => {
+      // Mark as unmounted and cleanup
+      isMountedRef.current = false;
+      cleanup();
+    };
+  }, [url]); // Only depend on url, connect is stable via useCallback
 
   return {
     ...state,

@@ -48,9 +48,9 @@ export default function TabLayout() {
       <Tabs.Screen
         name="history"
         options={{
-          title: "Temperature",
+          title: "Logs",
           tabBarIcon: ({ color }) => (
-            <IconSymbol size={28} name="thermometer" color={color} />
+            <IconSymbol size={28} name="paperplane.fill" color={color} />
           ),
         }}
       />

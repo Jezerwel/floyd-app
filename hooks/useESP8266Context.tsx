@@ -1,8 +1,10 @@
 import React, {
   createContext,
   ReactNode,
+  useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
 } from "react";
 import useWebSocket from "./useWebSocket";
@@ -48,6 +50,12 @@ interface ESP8266ContextType {
   setSensorReadingInterval: (interval: number) => boolean;
   requestSensorData: () => boolean;
 
+  // Auto-refresh controls
+  isAutoRefreshEnabled: boolean;
+  setAutoRefreshEnabled: (enabled: boolean) => void;
+  autoRefreshInterval: number;
+  setAutoRefreshInterval: (interval: number) => void;
+
   // Configuration
   deviceUrl: string | null;
   savedDevices: SavedDevice[];
@@ -55,7 +63,7 @@ interface ESP8266ContextType {
   removeSavedDevice: (id: string) => void;
 }
 
-interface SavedDevice {
+export interface SavedDevice {
   id: string;
   name: string;
   url: string;
@@ -63,6 +71,8 @@ interface SavedDevice {
 }
 
 const ESP8266Context = createContext<ESP8266ContextType | null>(null);
+
+const DEFAULT_AUTO_REFRESH_INTERVAL = 5000; // 5 seconds
 
 interface ESP8266ProviderProps {
   children: ReactNode;
@@ -74,6 +84,14 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
   const [deviceUrl, setDeviceUrlState] = useState<string | null>(null);
   const [deviceData, setDeviceData] = useState<ESP8266Data>({});
   const [savedDevices, setSavedDevices] = useState<SavedDevice[]>([]);
+  const [isAutoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState(
+    DEFAULT_AUTO_REFRESH_INTERVAL
+  );
+
+  // Add ref to track last LED command to prevent infinite loops
+  const lastLedCommandRef = useRef<number>(0);
+  const LED_COMMAND_DEBOUNCE_MS = 2000; // 2 seconds debounce
 
   const {
     isConnected,
@@ -86,6 +104,29 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     sendCommand,
     resetConnection: wsResetConnection,
   } = useWebSocket(deviceUrl);
+
+  // Device control functions (moved up to avoid dependency issues)
+  const requestSensorData = useCallback((): boolean => {
+    return sendCommand({
+      action: "get_sensors",
+    });
+  }, [sendCommand]);
+
+  // Auto-refresh sensor data
+  useEffect(() => {
+    if (isConnected && isAutoRefreshEnabled && autoRefreshInterval > 0) {
+      const interval = setInterval(() => {
+        requestSensorData();
+      }, autoRefreshInterval);
+
+      return () => clearInterval(interval);
+    }
+  }, [
+    isConnected,
+    isAutoRefreshEnabled,
+    autoRefreshInterval,
+    requestSensorData,
+  ]);
 
   // Handle incoming messages from ESP8266
   useEffect(() => {
@@ -142,11 +183,27 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     });
   };
 
-  const requestSensorData = (): boolean => {
-    return sendCommand({
-      action: "get_sensors",
-    });
-  };
+  // Auto LED control based on connection status
+  useEffect(() => {
+    const now = Date.now();
+
+    // Debounce LED commands to prevent infinite loops
+    if (now - lastLedCommandRef.current < LED_COMMAND_DEBOUNCE_MS) {
+      return;
+    }
+
+    if (isConnected && deviceData.ledState === false) {
+      // Turn LED ON when connected (if not already on)
+      console.log("Auto-turning LED ON (connected)");
+      sendCommand({ action: "toggle_led" });
+      lastLedCommandRef.current = now;
+    } else if (!isConnected && deviceData.ledState === true) {
+      // Turn LED OFF when disconnected (if not already off)
+      console.log("Auto-turning LED OFF (disconnected)");
+      sendCommand({ action: "toggle_led" });
+      lastLedCommandRef.current = now;
+    }
+  }, [isConnected, deviceData.ledState, sendCommand]);
 
   // Connection management
   const setDeviceUrl = (url: string) => {
@@ -198,6 +255,12 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     toggleRelay,
     setSensorReadingInterval,
     requestSensorData,
+
+    // Auto-refresh controls
+    isAutoRefreshEnabled,
+    setAutoRefreshEnabled,
+    autoRefreshInterval,
+    setAutoRefreshInterval,
 
     // Configuration
     deviceUrl,

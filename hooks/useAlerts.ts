@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useESP8266 } from "./useESP8266Context";
 
 export interface Alert {
@@ -23,6 +23,21 @@ const THRESHOLDS = {
   CRITICAL_FOOD: 10,
   TEMP_MIN: 20,
   TEMP_MAX: 32,
+} as const;
+
+// Validation ranges for sensor values
+const SENSOR_RANGES = {
+  TEMPERATURE: { min: -40, max: 85 }, // DS18B20 sensor range
+  FOOD_LEVEL: { min: 0, max: 100 },
+  DISTANCE: { min: 0, max: 400 }, // HC-SR04 max range ~4m
+} as const;
+
+const validateSensorValue = (
+  value: number,
+  type: keyof typeof SENSOR_RANGES
+): boolean => {
+  const range = SENSOR_RANGES[type];
+  return value >= range.min && value <= range.max;
 };
 
 const useAlerts = () => {
@@ -36,9 +51,9 @@ const useAlerts = () => {
     }
   }, [isConnected]);
 
-  // Monitor sensor data and generate/resolve alerts
-  useEffect(() => {
-    if (!isConnected) return;
+  // Generate current alerts based on sensor data
+  const generateCurrentAlerts = useCallback((): Alert[] => {
+    if (!isConnected) return [];
 
     const currentTime = new Date().toLocaleString();
     const newAlerts: Alert[] = [];
@@ -50,30 +65,33 @@ const useAlerts = () => {
     ) {
       const foodLevel = deviceData.foodLevelPercentage;
 
-      if (foodLevel <= THRESHOLDS.CRITICAL_FOOD) {
-        newAlerts.push({
-          id: "critical_food",
-          type: "CRITICAL_FOOD",
-          message: `Critical food level at ${foodLevel.toFixed(
-            1
-          )}%. Immediate refill required!`,
-          timestamp: currentTime,
-          severity: "HIGH",
-          isResolved: false,
-          triggerValue: foodLevel,
-        });
-      } else if (foodLevel <= THRESHOLDS.LOW_FOOD) {
-        newAlerts.push({
-          id: "low_food",
-          type: "LOW_FOOD",
-          message: `Food level dropped to ${foodLevel.toFixed(
-            1
-          )}%. Consider refilling soon.`,
-          timestamp: currentTime,
-          severity: "MEDIUM",
-          isResolved: false,
-          triggerValue: foodLevel,
-        });
+      // Validate food level value
+      if (validateSensorValue(foodLevel, "FOOD_LEVEL")) {
+        if (foodLevel <= THRESHOLDS.CRITICAL_FOOD) {
+          newAlerts.push({
+            id: "critical_food",
+            type: "CRITICAL_FOOD",
+            message: `Critical food level at ${foodLevel.toFixed(
+              1
+            )}%. Immediate refill required!`,
+            timestamp: currentTime,
+            severity: "HIGH",
+            isResolved: false,
+            triggerValue: foodLevel,
+          });
+        } else if (foodLevel <= THRESHOLDS.LOW_FOOD) {
+          newAlerts.push({
+            id: "low_food",
+            type: "LOW_FOOD",
+            message: `Food level dropped to ${foodLevel.toFixed(
+              1
+            )}%. Consider refilling soon.`,
+            timestamp: currentTime,
+            severity: "MEDIUM",
+            isResolved: false,
+            triggerValue: foodLevel,
+          });
+        }
       }
     }
 
@@ -84,30 +102,33 @@ const useAlerts = () => {
     ) {
       const temp = deviceData.temperature;
 
-      if (temp > THRESHOLDS.TEMP_MAX) {
-        newAlerts.push({
-          id: "temp_high",
-          type: "TEMPERATURE_HIGH",
-          message: `Water temperature is high at ${temp.toFixed(
-            1
-          )}°C. Check cooling system.`,
-          timestamp: currentTime,
-          severity: "MEDIUM",
-          isResolved: false,
-          triggerValue: temp,
-        });
-      } else if (temp < THRESHOLDS.TEMP_MIN) {
-        newAlerts.push({
-          id: "temp_low",
-          type: "TEMPERATURE_LOW",
-          message: `Water temperature is low at ${temp.toFixed(
-            1
-          )}°C. Check heating system.`,
-          timestamp: currentTime,
-          severity: "MEDIUM",
-          isResolved: false,
-          triggerValue: temp,
-        });
+      // Validate temperature value
+      if (validateSensorValue(temp, "TEMPERATURE")) {
+        if (temp > THRESHOLDS.TEMP_MAX) {
+          newAlerts.push({
+            id: "temp_high",
+            type: "TEMPERATURE_HIGH",
+            message: `Water temperature is high at ${temp.toFixed(
+              1
+            )}°C. Check cooling system.`,
+            timestamp: currentTime,
+            severity: "MEDIUM",
+            isResolved: false,
+            triggerValue: temp,
+          });
+        } else if (temp < THRESHOLDS.TEMP_MIN) {
+          newAlerts.push({
+            id: "temp_low",
+            type: "TEMPERATURE_LOW",
+            message: `Water temperature is low at ${temp.toFixed(
+              1
+            )}°C. Check heating system.`,
+            timestamp: currentTime,
+            severity: "MEDIUM",
+            isResolved: false,
+            triggerValue: temp,
+          });
+        }
       }
     }
 
@@ -136,25 +157,7 @@ const useAlerts = () => {
       });
     }
 
-    // Update alerts state
-    setAlerts((prevAlerts) => {
-      // Remove old alerts that should be auto-resolved
-      const unresolvedAlerts = prevAlerts.filter((alert) => {
-        // Keep alerts that are still relevant
-        const newAlertIds = newAlerts.map((a) => a.id);
-        return newAlertIds.includes(alert.id);
-      });
-
-      // Add new alerts that don't already exist
-      const existingIds = unresolvedAlerts.map((a) => a.id);
-      const alertsToAdd = newAlerts.filter(
-        (alert) => !existingIds.includes(alert.id)
-      );
-
-      // Combine and limit to 6 alerts (newest first)
-      const allAlerts = [...alertsToAdd, ...unresolvedAlerts];
-      return allAlerts.slice(0, 6);
-    });
+    return newAlerts;
   }, [
     isConnected,
     deviceData.foodLevelPercentage,
@@ -163,7 +166,36 @@ const useAlerts = () => {
     deviceData.ultrasonicSensorConnected,
   ]);
 
-  const getRelativeTime = (timestamp: string): string => {
+  // Memoized current alerts to avoid unnecessary recalculations
+  const currentAlerts = useMemo(
+    () => generateCurrentAlerts(),
+    [generateCurrentAlerts]
+  );
+
+  // Only update alerts state when the actual alerts change
+  useEffect(() => {
+    setAlerts((prevAlerts) => {
+      // Create a comparison key for each alert to detect changes
+      const getCurrentAlertKeys = (alerts: Alert[]) =>
+        alerts
+          .map((alert) => `${alert.id}:${alert.triggerValue}`)
+          .sort()
+          .join("|");
+
+      const prevAlertKeys = getCurrentAlertKeys(prevAlerts);
+      const currentAlertKeys = getCurrentAlertKeys(currentAlerts);
+
+      // Only update if alerts actually changed
+      if (prevAlertKeys !== currentAlertKeys) {
+        // Limit to 6 alerts (newest first)
+        return currentAlerts.slice(0, 6);
+      }
+
+      return prevAlerts;
+    });
+  }, [currentAlerts]);
+
+  const getRelativeTime = useCallback((timestamp: string): string => {
     const now = new Date();
     const alertTime = new Date(timestamp);
     const diffMs = now.getTime() - alertTime.getTime();
@@ -177,21 +209,32 @@ const useAlerts = () => {
     if (diffHours < 24)
       return `${diffHours} hour${diffHours > 1 ? "s" : ""} ago`;
     return `${diffDays} day${diffDays > 1 ? "s" : ""} ago`;
-  };
+  }, []);
 
   // Convert absolute timestamps to relative times for display
-  const alertsWithRelativeTime = alerts.map((alert) => ({
-    ...alert,
-    timestamp: getRelativeTime(alert.timestamp),
-  }));
+  const alertsWithRelativeTime = useMemo(
+    () =>
+      alerts.map((alert) => ({
+        ...alert,
+        timestamp: getRelativeTime(alert.timestamp),
+      })),
+    [alerts, getRelativeTime]
+  );
+
+  const alertAnalysis = useMemo(
+    () => ({
+      alertCount: alerts.length,
+      hasHighSeverityAlerts: alerts.some((alert) => alert.severity === "HIGH"),
+      hasMediumSeverityAlerts: alerts.some(
+        (alert) => alert.severity === "MEDIUM"
+      ),
+    }),
+    [alerts]
+  );
 
   return {
     alerts: alertsWithRelativeTime,
-    alertCount: alerts.length,
-    hasHighSeverityAlerts: alerts.some((alert) => alert.severity === "HIGH"),
-    hasMediumSeverityAlerts: alerts.some(
-      (alert) => alert.severity === "MEDIUM"
-    ),
+    ...alertAnalysis,
   };
 };
 

@@ -1,3 +1,4 @@
+import ESP8266Connection from "@/components/ESP8266Connection";
 import { AlertItem } from "@/components/ui/AlertItem";
 import { CircularProgress } from "@/components/ui/CircularProgress";
 import { IconSymbol } from "@/components/ui/IconSymbol";
@@ -7,8 +8,9 @@ import useAlerts from "@/hooks/useAlerts";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useESP8266 } from "@/hooks/useESP8266Context";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
+  Image,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -32,29 +34,47 @@ export default function DashboardScreen() {
   // Local state for UI controls
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
+    if (isRefreshing || !isConnected) return;
+
     setIsRefreshing(true);
-    requestSensorData();
+    const success = requestSensorData();
+
+    // Wait for a minimum time to show the refresh animation
+    // and a bit longer if the request failed to show the state
+    const minRefreshTime = success ? 800 : 1500;
+
     setTimeout(() => {
       setIsRefreshing(false);
-    }, 1500);
+    }, minRefreshTime);
   };
 
-  // Auto-refresh sensor data every 10 seconds
-  useEffect(() => {
-    const interval = setInterval(() => {
-      if (isConnected) {
-        requestSensorData();
-      }
-    }, 10000);
+  // Sensor validation functions
+  const isValidTemperature = (temp?: number): boolean => {
+    return temp !== undefined && temp >= -40 && temp <= 85;
+  };
 
-    return () => clearInterval(interval);
-  }, [isConnected, requestSensorData]);
+  const isValidDistance = (distance?: number): boolean => {
+    return distance !== undefined && distance >= 0 && distance <= 400;
+  };
 
-  // Get real sensor values or fallback based on connection status
-  const temperature = isConnected ? deviceData.temperature ?? 24.5 : null;
-  const foodLevel = isConnected ? deviceData.foodLevelPercentage ?? 75 : null;
-  const distance = isConnected ? deviceData.distance ?? 5.2 : null;
+  const isValidFoodLevel = (level?: number): boolean => {
+    return level !== undefined && level >= 0 && level <= 100;
+  };
+
+  // Get real sensor values with validation
+  const temperature =
+    isConnected && isValidTemperature(deviceData.temperature)
+      ? deviceData.temperature
+      : null;
+  const foodLevel =
+    isConnected && isValidFoodLevel(deviceData.foodLevelPercentage)
+      ? deviceData.foodLevelPercentage
+      : null;
+  const distance =
+    isConnected && isValidDistance(deviceData.distance)
+      ? deviceData.distance
+      : null;
   const isTemperatureSensorConnected =
     isConnected && (deviceData.temperatureSensorConnected ?? false);
   const isUltrasonicSensorConnected =
@@ -77,18 +97,12 @@ export default function DashboardScreen() {
       <View style={[styles.header, { backgroundColor: colors.background }]}>
         <View style={styles.headerContent}>
           <View style={styles.deviceInfo}>
-            <View
-              style={[
-                styles.deviceIconContainer,
-                { backgroundColor: `${colors.primary}15` },
-              ]}
-            >
-              <IconSymbol name="wifi" size={24} color={colors.primary} />
-            </View>
             <View>
-              <Text style={[styles.deviceTitle, { color: colors.text }]}>
-                FLOYD 1.0
-              </Text>
+              <Image
+                source={require("../../assets/images/floyd.png")}
+                style={styles.logoImage}
+                resizeMode="contain"
+              />
               <View style={styles.statusRow}>
                 <View
                   style={[
@@ -135,6 +149,9 @@ export default function DashboardScreen() {
           />
         }
       >
+        {/* ESP8266 Connection Management */}
+        <ESP8266Connection />
+
         {/* Feeder Capacity - Now using real ultrasonic sensor data */}
         <StatCard
           title="Feeder Capacity"
@@ -151,7 +168,7 @@ export default function DashboardScreen() {
                 Food Remaining
               </Text>
               <Text style={[styles.capacityValue, { color: colors.text }]}>
-                {foodLevel !== null ? `${foodLevel.toFixed(1)}%` : "--"}
+                {foodLevel !== null ? `${foodLevel!.toFixed(1)}%` : "--"}
               </Text>
               <View style={styles.sensorInfo}>
                 <View style={styles.alertRow}>
@@ -179,7 +196,7 @@ export default function DashboardScreen() {
                     ]}
                   >
                     Distance:{" "}
-                    {distance !== null ? `${distance.toFixed(1)} cm` : "--"}
+                    {distance !== null ? `${distance!.toFixed(1)} cm` : "--"}
                   </Text>
                 </View>
                 <View style={styles.alertRow}>
@@ -198,7 +215,7 @@ export default function DashboardScreen() {
         <View style={styles.statsRow}>
           <StatCard
             title="Water Temp"
-            value={temperature !== null ? temperature.toFixed(1) : "--"}
+            value={temperature !== null ? temperature!.toFixed(1) : "--"}
             unit={temperature !== null ? "°C" : ""}
             icon="thermometer"
             color={
@@ -299,10 +316,9 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  deviceTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    letterSpacing: -0.3,
+  logoImage: {
+    width: 80,
+    height: 32,
   },
   statusRow: {
     flexDirection: "row",

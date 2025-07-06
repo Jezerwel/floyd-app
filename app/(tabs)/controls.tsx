@@ -18,7 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 export default function ControlsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? "light"];
-  const { toggleRelay, toggleLED, deviceData, isConnected } = useESP8266();
+  const { toggleRelay, isConnected } = useESP8266();
 
   // Paddle on/off states
   const [leftPaddleOn, setLeftPaddleOn] = useState(false);
@@ -66,9 +66,6 @@ export default function ControlsScreen() {
       ]
     );
   };
-
-  // Get device states with fallbacks
-  const ledState = deviceData.ledState ?? false;
 
   return (
     <SafeAreaView
@@ -199,48 +196,6 @@ export default function ControlsScreen() {
             )}
           </View>
         </StatCard>
-
-        {/* LED Control */}
-        <StatCard title="LED Control" icon="lightbulb" color={colors.secondary}>
-          <View style={styles.deviceControlsContainer}>
-            <View style={styles.deviceControlRow}>
-              <View style={styles.deviceControlInfo}>
-                <Text
-                  style={[styles.deviceControlLabel, { color: colors.text }]}
-                >
-                  LED Status
-                </Text>
-                <Text
-                  style={[styles.deviceControlSubtext, { color: colors.muted }]}
-                >
-                  Visual indicator light
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={[
-                  styles.deviceControlButton,
-                  {
-                    backgroundColor: ledState ? colors.warning : colors.border,
-                  },
-                ]}
-                onPress={() => toggleLED()}
-                disabled={!isConnected}
-              >
-                <IconSymbol
-                  name={ledState ? "lightbulb.fill" : "lightbulb"}
-                  size={16}
-                  color={ledState ? "white" : colors.muted}
-                />
-              </TouchableOpacity>
-            </View>
-
-            {!isConnected && (
-              <Text style={[styles.connectionWarning, { color: colors.muted }]}>
-                Connect to your feeder device to enable controls
-              </Text>
-            )}
-          </View>
-        </StatCard>
       </ScrollView>
     </SafeAreaView>
   );
@@ -323,36 +278,5 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     fontStyle: "italic",
-  },
-  deviceControlsContainer: {
-    gap: 16,
-  },
-  deviceControlRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  deviceControlInfo: {
-    flexDirection: "column",
-  },
-  deviceControlLabel: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  deviceControlSubtext: {
-    fontSize: 14,
-    fontStyle: "italic",
-  },
-  deviceControlButton: {
-    padding: 8,
-    borderRadius: 8,
-    shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
   },
 });
