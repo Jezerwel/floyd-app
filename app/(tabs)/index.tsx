@@ -25,7 +25,13 @@ export default function DashboardScreen() {
   const colors = Colors[colorScheme as keyof typeof Colors];
 
   // ESP8266 context for real sensor data
-  const { deviceData, isConnected, requestSensorData } = useESP8266();
+  const {
+    deviceData,
+    isConnected,
+    requestSensorData,
+    isProxyConnection,
+    esp8266Status,
+  } = useESP8266();
 
   // Dynamic alerts system
   const { alerts, alertCount, hasHighSeverityAlerts, hasMediumSeverityAlerts } =
@@ -87,6 +93,48 @@ export default function DashboardScreen() {
     return colors.success;
   };
 
+  // Determine overall connection status for display
+  const getConnectionStatus = () => {
+    if (!isConnected) {
+      return {
+        status: "Disconnected",
+        color: colors.error,
+        icon: "xmark.circle.fill",
+      };
+    }
+
+    if (isProxyConnection) {
+      // For proxy connections, show ESP8266 status
+      if (esp8266Status === "connected") {
+        return {
+          status: "Connected via Proxy",
+          color: colors.success,
+          icon: "checkmark.circle.fill",
+        };
+      } else if (esp8266Status === "disconnected") {
+        return {
+          status: "Proxy OK, ESP8266 Offline",
+          color: colors.warning,
+          icon: "exclamationmark.triangle.fill",
+        };
+      } else {
+        return {
+          status: "Proxy Connected",
+          color: colors.warning,
+          icon: "questionmark.circle.fill",
+        };
+      }
+    } else {
+      return {
+        status: "Connected Direct",
+        color: colors.success,
+        icon: "checkmark.circle.fill",
+      };
+    }
+  };
+
+  const connectionStatus = getConnectionStatus();
+
   return (
     <SafeAreaView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -104,32 +152,35 @@ export default function DashboardScreen() {
                 resizeMode="contain"
               />
               <View style={styles.statusRow}>
-                <View
-                  style={[
-                    styles.statusDot,
-                    {
-                      backgroundColor: isConnected
-                        ? colors.success
-                        : colors.error,
-                    },
-                  ]}
+                <IconSymbol
+                  name={connectionStatus.icon as any}
+                  size={16}
+                  color={connectionStatus.color}
                 />
-                <Text
-                  style={[
-                    styles.statusText,
-                    {
-                      color: isConnected ? colors.success : colors.error,
-                    },
-                  ]}
-                >
-                  {isConnected ? "Connected" : "Disconnected"}
-                </Text>
+                <View style={styles.statusTextContainer}>
+                  <Text
+                    style={[
+                      styles.statusText,
+                      { color: connectionStatus.color },
+                    ]}
+                  >
+                    {connectionStatus.status}
+                  </Text>
+                  {isProxyConnection && esp8266Status === "disconnected" && (
+                    <Text
+                      style={[styles.statusSubText, { color: colors.muted }]}
+                    >
+                      Hardware not responding
+                    </Text>
+                  )}
+                </View>
               </View>
             </View>
           </View>
           <TouchableOpacity
             style={[styles.refreshButton, { backgroundColor: colors.primary }]}
             onPress={handleRefresh}
+            disabled={!isConnected}
           >
             <IconSymbol name="arrow.clockwise" size={18} color="white" />
           </TouchableOpacity>
@@ -152,6 +203,64 @@ export default function DashboardScreen() {
         {/* ESP8266 Connection Management */}
         <ESP8266Connection />
 
+        {/* Proxy Server Status (if using proxy) */}
+        {isProxyConnection && (
+          <StatCard
+            title="Proxy Server Status"
+            icon="server.rack"
+            color={colors.secondary}
+          >
+            <View style={styles.proxyStatusContainer}>
+              <View style={styles.statusRow}>
+                <IconSymbol
+                  name="checkmark.circle.fill"
+                  size={16}
+                  color={colors.success}
+                />
+                <Text style={[styles.statusText, { color: colors.text }]}>
+                  Express Proxy: Connected
+                </Text>
+              </View>
+              <View style={styles.statusRow}>
+                <IconSymbol
+                  name={
+                    esp8266Status === "connected"
+                      ? "checkmark.circle.fill"
+                      : "xmark.circle.fill"
+                  }
+                  size={16}
+                  color={
+                    esp8266Status === "connected"
+                      ? colors.success
+                      : colors.error
+                  }
+                />
+                <Text style={[styles.statusText, { color: colors.text }]}>
+                  ESP8266 Hardware:{" "}
+                  {esp8266Status === "connected"
+                    ? "Connected"
+                    : esp8266Status === "disconnected"
+                    ? "Disconnected"
+                    : "Unknown"}
+                </Text>
+              </View>
+              {esp8266Status === "disconnected" && (
+                <View
+                  style={[
+                    styles.helpBox,
+                    { backgroundColor: colors.warning + "20" },
+                  ]}
+                >
+                  <Text style={[styles.helpText, { color: colors.text }]}>
+                    💡 The proxy server is working, but the ESP8266 hardware is
+                    not responding. Check device power and WiFi connection.
+                  </Text>
+                </View>
+              )}
+            </View>
+          </StatCard>
+        )}
+
         {/* Feeder Capacity - Now using real ultrasonic sensor data */}
         <StatCard
           title="Feeder Capacity"
@@ -168,16 +277,14 @@ export default function DashboardScreen() {
                 Food Remaining
               </Text>
               <Text style={[styles.capacityValue, { color: colors.text }]}>
-                {foodLevel !== null ? `${foodLevel!.toFixed(1)}%` : "--"}
+                {foodLevel !== null && foodLevel !== undefined
+                  ? `${foodLevel.toFixed(1)}%`
+                  : "--"}
               </Text>
               <View style={styles.sensorInfo}>
                 <View style={styles.alertRow}>
                   <IconSymbol
-                    name={
-                      isUltrasonicSensorConnected
-                        ? "checkmark.circle.fill"
-                        : "xmark.circle.fill"
-                    }
+                    name={isUltrasonicSensorConnected ? "checkmark" : "xmark"}
                     size={14}
                     color={
                       isUltrasonicSensorConnected
@@ -196,16 +303,16 @@ export default function DashboardScreen() {
                     ]}
                   >
                     Distance:{" "}
-                    {distance !== null ? `${distance!.toFixed(1)} cm` : "--"}
+                    {distance !== null && distance !== undefined
+                      ? `${distance.toFixed(1)}cm`
+                      : "No data"}
                   </Text>
                 </View>
-                <View style={styles.alertRow}>
-                  <IconSymbol
-                    name="bell.fill"
-                    size={14}
-                    color={colors.success}
-                  />
-                </View>
+                {!isUltrasonicSensorConnected && isConnected && (
+                  <Text style={[styles.sensorWarning, { color: colors.error }]}>
+                    Ultrasonic sensor disconnected
+                  </Text>
+                )}
               </View>
             </View>
           </View>
@@ -215,8 +322,12 @@ export default function DashboardScreen() {
         <View style={styles.statsRow}>
           <StatCard
             title="Water Temp"
-            value={temperature !== null ? temperature!.toFixed(1) : "--"}
-            unit={temperature !== null ? "°C" : ""}
+            value={
+              temperature !== null && temperature !== undefined
+                ? temperature.toFixed(1)
+                : "--"
+            }
+            unit={temperature !== null && temperature !== undefined ? "°C" : ""}
             icon="thermometer"
             color={
               isTemperatureSensorConnected ? colors.secondary : colors.error
@@ -421,5 +532,26 @@ const styles = StyleSheet.create({
   },
   bottomSpacing: {
     height: 100,
+  },
+  proxyStatusContainer: {
+    gap: 12,
+  },
+  statusTextContainer: {
+    flexDirection: "column",
+  },
+  statusSubText: {
+    fontSize: 12,
+  },
+  helpBox: {
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 12,
+  },
+  helpText: {
+    fontSize: 14,
+  },
+  sensorWarning: {
+    fontSize: 12,
+    marginTop: 4,
   },
 });

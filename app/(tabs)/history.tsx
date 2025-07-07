@@ -62,7 +62,15 @@ export default function LogsScreen() {
         return [newLogEntry, ...prev].slice(0, 50);
       });
     }
-  }, [isConnected, deviceData.lastUpdate]); // Only depend on lastUpdate, not entire deviceData
+  }, [
+    isConnected,
+    deviceData.lastUpdate,
+    deviceData.temperature,
+    deviceData.distance,
+    deviceData.foodLevelPercentage,
+    deviceData.temperatureSensorConnected,
+    deviceData.ultrasonicSensorConnected,
+  ]);
 
   const clearLogs = () => {
     setSensorLogs([]);
@@ -92,17 +100,17 @@ export default function LogsScreen() {
         </Text>
       </View>
       <View style={styles.logContent}>
-        {item.temperature !== undefined && (
+        {item.temperature !== undefined && item.temperature !== null && (
           <Text style={[styles.logValue, { color: colors.text }]}>
             🌡️ {item.temperature.toFixed(1)}°C
           </Text>
         )}
-        {item.distance !== undefined && (
+        {item.distance !== undefined && item.distance !== null && (
           <Text style={[styles.logValue, { color: colors.text }]}>
             📏 {item.distance.toFixed(1)}cm
           </Text>
         )}
-        {item.foodLevel !== undefined && (
+        {item.foodLevel !== undefined && item.foodLevel !== null && (
           <Text style={[styles.logValue, { color: colors.text }]}>
             🥘 {item.foodLevel.toFixed(1)}%
           </Text>

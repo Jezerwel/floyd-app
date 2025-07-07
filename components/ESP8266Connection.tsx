@@ -150,11 +150,147 @@ const ESP8266Connection: React.FC = () => {
                     Attempt {connectionAttempts}/5
                   </Text>
                 )}
+
+                {/* Connection Reset Troubleshooting */}
+                {(error.toLowerCase().includes("reset") ||
+                  error.toLowerCase().includes("lost unexpectedly")) && (
+                  <View style={styles.troubleshootingContainer}>
+                    <Text
+                      style={[
+                        styles.troubleshootingTitle,
+                        { color: colors.warning },
+                      ]}
+                    >
+                      💡 Troubleshooting Tips:
+                    </Text>
+                    <Text
+                      style={[
+                        styles.troubleshootingText,
+                        { color: colors.muted },
+                      ]}
+                    >
+                      • Check ESP8266 power supply and connections{"\n"}• Ensure
+                      device is connected to WiFi{"\n"}• Try pressing the reset
+                      button on your ESP8266{"\n"}• Wait 10-15 seconds before
+                      reconnecting
+                    </Text>
+                  </View>
+                )}
+
+                {/* Network/Timeout Troubleshooting */}
+                {(error.toLowerCase().includes("timeout") ||
+                  error.toLowerCase().includes("refused") ||
+                  error.toLowerCase().includes("network") ||
+                  error.toLowerCase().includes("offline")) && (
+                  <View style={styles.troubleshootingContainer}>
+                    <Text
+                      style={[
+                        styles.troubleshootingTitle,
+                        { color: colors.warning },
+                      ]}
+                    >
+                      💡 Connection Troubleshooting:
+                    </Text>
+                    <Text
+                      style={[
+                        styles.troubleshootingText,
+                        { color: colors.muted },
+                      ]}
+                    >
+                      <Text style={{ fontWeight: "bold" }}>
+                        For Proxy Server (port 3001):
+                      </Text>
+                      {"\n"}• Use your computer&apos;s IP address (e.g.
+                      192.168.1.50:3001){"\n"}• Make sure proxy server is
+                      running: cd server && npm run dev{"\n"}• Ensure phone and
+                      computer are on same network
+                      {"\n\n"}
+                      <Text style={{ fontWeight: "bold" }}>
+                        For Direct ESP8266 (port 81):
+                      </Text>
+                      {"\n"}• Verify ESP8266 IP address{"\n"}• Ensure same WiFi
+                      network{"\n"}• Check ESP8266 WebSocket server is running
+                    </Text>
+                  </View>
+                )}
               </View>
             )}
+            {/* Quick Connection Options */}
+            <View style={styles.quickConnectContainer}>
+              <Text style={[styles.inputLabel, { color: colors.text }]}>
+                Quick Connect
+              </Text>
+              <View style={styles.quickConnectGrid}>
+                <TouchableOpacity
+                  style={[
+                    styles.quickConnectButton,
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setInputUrl("172.17.170.57:3001")}
+                >
+                  <IconSymbol name="power" size={14} color={colors.secondary} />
+                  <Text
+                    style={[styles.quickConnectText, { color: colors.text }]}
+                  >
+                    Physical Device
+                  </Text>
+                  <Text
+                    style={[
+                      styles.quickConnectSubtext,
+                      { color: colors.muted },
+                    ]}
+                  >
+                    172.17.170.57:3001
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.quickConnectButton,
+                    {
+                      backgroundColor: colors.card,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  onPress={() => setInputUrl("172.17.170.11:81")}
+                >
+                  <IconSymbol name="wifi" size={14} color={colors.warning} />
+                  <Text
+                    style={[styles.quickConnectText, { color: colors.text }]}
+                  >
+                    ESP8266 Direct
+                  </Text>
+                  <Text
+                    style={[
+                      styles.quickConnectSubtext,
+                      { color: colors.muted },
+                    ]}
+                  >
+                    172.17.170.11:81
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View
+                style={[
+                  styles.helpContainer,
+                  { backgroundColor: colors.card + "40" },
+                ]}
+              >
+                <Text style={[styles.helpText, { color: colors.muted }]}>
+                  💡 Choose based on your setup:{"\n"}• Physical Device: Use
+                  your computer&apos;s IP with port 3001{"\n"}• Direct ESP8266:
+                  Connect directly to ESP8266 hardware (port 81)
+                </Text>
+              </View>
+            </View>
+
             <View style={styles.inputGroup}>
               <Text style={[styles.inputLabel, { color: colors.text }]}>
-                ESP8266 WebSocket URL
+                WebSocket URL
               </Text>
               <TextInput
                 style={[
@@ -165,7 +301,7 @@ const ESP8266Connection: React.FC = () => {
                     color: colors.text,
                   },
                 ]}
-                placeholder="192.168.1.100:81"
+                placeholder="192.168.1.50:3001 or 192.168.1.100:81"
                 placeholderTextColor={colors.muted}
                 value={inputUrl}
                 onChangeText={setInputUrl}
@@ -173,7 +309,10 @@ const ESP8266Connection: React.FC = () => {
                 autoCorrect={false}
               />
               <Text style={[styles.inputHint, { color: colors.muted }]}>
-                Enter IP address with port (e.g., 192.168.1.100:81)
+                🖥️ Proxy server: Use your computer&apos;s IP address with port
+                3001{"\n"}
+                📡 Direct ESP8266: Use your ESP8266&apos;s IP address with port
+                81
               </Text>
             </View>
 
@@ -345,6 +484,33 @@ const styles = StyleSheet.create({
   formContainer: {
     gap: 16,
   },
+  quickConnectContainer: {
+    gap: 8,
+  },
+  quickConnectButtons: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  quickConnectGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  quickConnectButton: {
+    width: "48%",
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: "center",
+    gap: 4,
+  },
+  quickConnectText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  quickConnectSubtext: {
+    fontSize: 12,
+  },
   inputGroup: {
     gap: 6,
   },
@@ -449,6 +615,30 @@ const styles = StyleSheet.create({
   guideText: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  troubleshootingContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: "#ffffff20",
+  },
+  troubleshootingTitle: {
+    fontSize: 13,
+    fontWeight: "600",
+    marginBottom: 6,
+  },
+  troubleshootingText: {
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  helpContainer: {
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  helpText: {
+    fontSize: 12,
+    lineHeight: 16,
   },
 });
 

@@ -84,7 +84,9 @@ export const DistanceSensor: React.FC<DistanceSensorProps> = ({
               Distance
             </Text>
             <Text style={[styles.value, { color: colors.text }]}>
-              {isConnected ? `${distance.toFixed(1)} cm` : "N/A"}
+              {isConnected && distance !== null && distance !== undefined
+                ? `${distance.toFixed(1)} cm`
+                : "N/A"}
             </Text>
           </View>
 
@@ -93,7 +95,11 @@ export const DistanceSensor: React.FC<DistanceSensorProps> = ({
               Food Level
             </Text>
             <Text style={[styles.value, { color: colors.text }]}>
-              {isConnected ? `${foodLevelPercentage.toFixed(1)}%` : "N/A"}
+              {isConnected &&
+              foodLevelPercentage !== null &&
+              foodLevelPercentage !== undefined
+                ? `${foodLevelPercentage.toFixed(1)}%`
+                : "N/A"}
             </Text>
           </View>
 

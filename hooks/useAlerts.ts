@@ -61,6 +61,7 @@ const useAlerts = () => {
     // Food level alerts
     if (
       deviceData.foodLevelPercentage !== undefined &&
+      deviceData.foodLevelPercentage !== null &&
       deviceData.ultrasonicSensorConnected
     ) {
       const foodLevel = deviceData.foodLevelPercentage;
@@ -98,6 +99,7 @@ const useAlerts = () => {
     // Temperature alerts
     if (
       deviceData.temperature !== undefined &&
+      deviceData.temperature !== null &&
       deviceData.temperatureSensorConnected
     ) {
       const temp = deviceData.temperature;

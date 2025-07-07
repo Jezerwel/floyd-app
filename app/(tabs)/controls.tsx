@@ -18,7 +18,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 export default function ControlsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? "light"];
-  const { toggleRelay, isConnected } = useESP8266();
+  const {
+    toggleRelay,
+    isConnected,
+    deviceData,
+    isProxyConnection,
+    esp8266Status,
+  } = useESP8266();
 
   // Paddle on/off states
   const [leftPaddleOn, setLeftPaddleOn] = useState(false);
@@ -34,7 +40,7 @@ export default function ControlsScreen() {
     // TODO: Send paddle control command to ESP8266
   };
 
-  const handleDispenseNow = () => {
+  const handleToggleDispenser = () => {
     if (!isConnected) {
       Alert.alert(
         "Error",
@@ -43,22 +49,38 @@ export default function ControlsScreen() {
       return;
     }
 
+    // Additional check for proxy connections
+    if (isProxyConnection && esp8266Status !== "connected") {
+      Alert.alert(
+        "ESP8266 Not Available",
+        "The proxy server is connected, but the ESP8266 hardware is not responding. Please check the device power and WiFi connection."
+      );
+      return;
+    }
+
+    const isCurrentlyActive = deviceData.relayState === true;
+    const action = isCurrentlyActive ? "stop" : "start";
+    const actionText = isCurrentlyActive ? "Stop" : "Start";
+
     Alert.alert(
-      "Dispense Food",
-      "This will activate the feeder relay to dispense food. Continue?",
+      `${actionText} Food Dispenser`,
+      `This will ${action} the food dispenser. Continue?`,
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: "Dispense",
-          style: "default",
+          text: actionText,
+          style: isCurrentlyActive ? "destructive" : "default",
           onPress: () => {
             const success = toggleRelay();
             if (success) {
-              Alert.alert("Success", "Food dispenser activated!");
+              Alert.alert(
+                "Success",
+                `Food dispenser ${isCurrentlyActive ? "stopped" : "activated"}!`
+              );
             } else {
               Alert.alert(
                 "Error",
-                "Failed to activate dispenser. Please try again."
+                `Failed to ${action} dispenser. Please try again.`
               );
             }
           },
@@ -66,6 +88,10 @@ export default function ControlsScreen() {
       ]
     );
   };
+
+  // Determine if controls should be enabled
+  const controlsEnabled =
+    isConnected && (!isProxyConnection || esp8266Status === "connected");
 
   return (
     <SafeAreaView
@@ -89,12 +115,27 @@ export default function ControlsScreen() {
         showsVerticalScrollIndicator={false}
         style={styles.scrollView}
       >
+        {/* Connection Status Warning for Proxy */}
+        {isProxyConnection && esp8266Status !== "connected" && (
+          <StatCard
+            title="Hardware Status"
+            icon="exclamationmark.triangle.fill"
+            color={colors.warning}
+          >
+            <View style={styles.warningContainer}>
+              <Text style={[styles.warningText, { color: colors.text }]}>
+                ESP8266 hardware is not responding. Controls are disabled until
+                the hardware reconnects.
+              </Text>
+              <Text style={[styles.warningSubtext, { color: colors.muted }]}>
+                Check device power and WiFi connection.
+              </Text>
+            </View>
+          </StatCard>
+        )}
+
         {/* Paddle Toggle Controls */}
-        <StatCard
-          title="Paddle Controls"
-          icon="gear.badge"
-          color={colors.primary}
-        >
+        <StatCard title="Paddle Controls" icon="gear" color={colors.primary}>
           <View style={styles.paddleContainer}>
             {/* Left Paddle Toggle */}
             <TouchableOpacity
@@ -103,15 +144,12 @@ export default function ControlsScreen() {
                 {
                   backgroundColor: leftPaddleOn ? colors.primary : colors.card,
                   borderColor: leftPaddleOn ? colors.primary : colors.border,
+                  opacity: controlsEnabled ? 1 : 0.5,
                 },
               ]}
               onPress={handleLeftPaddleToggle}
+              disabled={!controlsEnabled}
             >
-              {/* <IconSymbol
-                name="arrow.clockwise"
-                size={32}
-                color={leftPaddleOn ? "white" : colors.muted}
-              /> */}
               <Text
                 style={[
                   styles.paddleTitle,
@@ -137,15 +175,12 @@ export default function ControlsScreen() {
                 {
                   backgroundColor: rightPaddleOn ? colors.primary : colors.card,
                   borderColor: rightPaddleOn ? colors.primary : colors.border,
+                  opacity: controlsEnabled ? 1 : 0.5,
                 },
               ]}
               onPress={handleRightPaddleToggle}
+              disabled={!controlsEnabled}
             >
-              {/* <IconSymbol
-                name="arrow.counterclockwise"
-                size={32}
-                color={rightPaddleOn ? "white" : colors.muted}
-              /> */}
               <Text
                 style={[
                   styles.paddleTitle,
@@ -164,35 +199,90 @@ export default function ControlsScreen() {
               </Text>
             </TouchableOpacity>
           </View>
+
+          {!controlsEnabled && (
+            <Text style={[styles.disabledText, { color: colors.muted }]}>
+              Controls disabled -{" "}
+              {!isConnected ? "not connected" : "ESP8266 hardware offline"}
+            </Text>
+          )}
         </StatCard>
 
         {/* Manual Feed */}
-        <StatCard
-          title="Feed Dispenser"
-          icon="hand.point.up.left"
-          color={colors.secondary}
-        >
+        <StatCard title="Feed Dispenser" icon="power" color={colors.secondary}>
           <View style={styles.manualFeedContent}>
+            {/* Dispenser Status */}
+            {isConnected && (
+              <View style={styles.statusContainer}>
+                <View style={styles.statusRow}>
+                  <IconSymbol
+                    name="power"
+                    size={16}
+                    color={
+                      deviceData.relayState ? colors.success : colors.muted
+                    }
+                  />
+                  <Text style={[styles.statusText, { color: colors.text }]}>
+                    Dispenser: {deviceData.relayState ? "ACTIVE" : "INACTIVE"}
+                  </Text>
+                </View>
+                {deviceData.motorOpened !== undefined && (
+                  <View style={styles.statusRow}>
+                    <IconSymbol
+                      name="gear"
+                      size={16}
+                      color={
+                        deviceData.motorOpened ? colors.success : colors.muted
+                      }
+                    />
+                    <Text style={[styles.statusText, { color: colors.text }]}>
+                      Motor: {deviceData.motorOpened ? "OPENED" : "CLOSED"}
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {/* Feed Button */}
             <TouchableOpacity
               style={[
-                styles.dispenseButton,
+                styles.feedButton,
                 {
-                  backgroundColor: isConnected ? colors.accent : colors.muted,
-                  opacity: isConnected ? 1 : 0.6,
+                  backgroundColor: controlsEnabled
+                    ? deviceData.relayState
+                      ? colors.error
+                      : colors.success
+                    : colors.muted,
+                  opacity: controlsEnabled ? 1 : 0.5,
                 },
               ]}
-              onPress={handleDispenseNow}
-              disabled={!isConnected}
+              onPress={handleToggleDispenser}
+              disabled={!controlsEnabled}
             >
-              <IconSymbol name="drop.fill" size={24} color="white" />
-              <Text style={styles.dispenseButtonText}>
-                {isConnected ? "Dispense Now" : "Not Connected"}
+              <IconSymbol
+                name={deviceData.relayState ? "xmark" : "power"}
+                size={24}
+                color="white"
+              />
+              <Text style={styles.feedButtonText}>
+                {deviceData.relayState ? "Stop Feeding" : "Start Feeding"}
               </Text>
             </TouchableOpacity>
-            {!isConnected && (
-              <Text style={[styles.connectionWarning, { color: colors.muted }]}>
-                Connect to your feeder device to enable dispensing
-              </Text>
+
+            {!controlsEnabled && (
+              <View
+                style={[
+                  styles.helpContainer,
+                  { backgroundColor: colors.warning + "20" },
+                ]}
+              >
+                <Text style={[styles.helpText, { color: colors.text }]}>
+                  💡{" "}
+                  {!isConnected
+                    ? "Connect to the feeder to control the dispenser."
+                    : "ESP8266 hardware is offline. Check device connection."}
+                </Text>
+              </View>
             )}
           </View>
         </StatCard>
@@ -278,5 +368,64 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: "center",
     fontStyle: "italic",
+  },
+  statusContainer: {
+    gap: 8,
+    marginBottom: 8,
+  },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  statusText: {
+    fontSize: 14,
+    fontWeight: "500",
+  },
+  warningContainer: {
+    padding: 16,
+    gap: 8,
+  },
+  warningText: {
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  warningSubtext: {
+    fontSize: 14,
+  },
+  disabledText: {
+    fontSize: 14,
+    textAlign: "center",
+    fontStyle: "italic",
+  },
+  helpContainer: {
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 16,
+  },
+  helpText: {
+    fontSize: 14,
+    textAlign: "center",
+  },
+  feedButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    paddingVertical: 16,
+    borderRadius: 12,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  feedButtonText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "600",
   },
 });

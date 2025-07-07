@@ -19,10 +19,10 @@ export interface WebSocketState {
   connectionAttempts: number;
 }
 
-const MAX_RECONNECT_ATTEMPTS = 5;
-const RECONNECT_DELAY = 3000;
-const CONNECTION_TIMEOUT = 10000; // 10 seconds
-const HEARTBEAT_INTERVAL = 30000; // 30 seconds
+const MAX_RECONNECT_ATTEMPTS = 3; // Reduced from 5
+const RECONNECT_DELAY = 5000; // Increased from 3000ms
+const CONNECTION_TIMEOUT = 15000; // Increased from 10 seconds
+const HEARTBEAT_INTERVAL = 60000; // Increased from 30 seconds (let proxy handle keepalive)
 
 const useWebSocket = (url: string | null) => {
   const [state, setState] = useState<WebSocketState>({
@@ -69,11 +69,21 @@ const useWebSocket = (url: string | null) => {
         isMountedRef.current &&
         websocketRef.current?.readyState === WebSocket.OPEN
       ) {
+        // Only send ping if we haven't received any message recently
+        const lastMessageTime = state.lastMessage?.timestamp || 0;
+        const now = Date.now();
+
+        // If we got a message in the last 30 seconds, skip ping
+        if (now - lastMessageTime < 30000) {
+          startHeartbeat(); // Just schedule next heartbeat
+          return;
+        }
+
         websocketRef.current.send(JSON.stringify({ action: "ping" }));
         startHeartbeat(); // Schedule next heartbeat
       }
     }, HEARTBEAT_INTERVAL);
-  }, []);
+  }, [state.lastMessage?.timestamp]);
 
   // Use a ref to break circular dependency
   const connectInternalRef = useRef<(() => void) | null>(null);
@@ -82,11 +92,22 @@ const useWebSocket = (url: string | null) => {
     if (connectionAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
       setState((prev) => ({
         ...prev,
-        error: "Maximum reconnection attempts reached",
+        error:
+          "Maximum reconnection attempts reached. Please check connection and try again.",
         isConnecting: false,
       }));
       return;
     }
+
+    // Exponential backoff: increase delay with each attempt
+    const delay =
+      RECONNECT_DELAY * Math.pow(1.5, connectionAttemptsRef.current);
+
+    console.log(
+      `⏱️ Reconnecting in ${Math.round(delay / 1000)}s (attempt ${
+        connectionAttemptsRef.current + 1
+      }/${MAX_RECONNECT_ATTEMPTS})`
+    );
 
     reconnectTimeoutRef.current = setTimeout(() => {
       // Only attempt reconnect if component is still mounted
@@ -98,7 +119,7 @@ const useWebSocket = (url: string | null) => {
         }));
         connectInternalRef.current();
       }
-    }, RECONNECT_DELAY);
+    }, delay);
   }, []);
 
   const connectInternal = useCallback(() => {
@@ -113,6 +134,12 @@ const useWebSocket = (url: string | null) => {
     try {
       cleanup();
 
+      // Ensure URL has proper WebSocket protocol
+      const wsUrl =
+        url.startsWith("ws://") || url.startsWith("wss://")
+          ? url
+          : `ws://${url}`;
+
       // Set connection timeout
       connectionTimeoutRef.current = setTimeout(() => {
         setState((prev) => ({
@@ -123,7 +150,7 @@ const useWebSocket = (url: string | null) => {
         cleanup();
       }, CONNECTION_TIMEOUT);
 
-      websocketRef.current = new WebSocket(url);
+      websocketRef.current = new WebSocket(wsUrl);
 
       websocketRef.current.onopen = () => {
         if (connectionTimeoutRef.current) {
@@ -145,10 +172,14 @@ const useWebSocket = (url: string | null) => {
       websocketRef.current.onmessage = (event) => {
         try {
           const message: ESP8266Message = JSON.parse(event.data);
+
           // Validate message structure
           if (!message.type || typeof message.type !== "string") {
-            throw new Error("Invalid message format: missing or invalid type");
+            console.warn("Received message with invalid format:", message);
+            return; // Don't set error, just skip invalid messages
           }
+
+          // Clear any previous errors on successful message
           setState((prev) => ({
             ...prev,
             lastMessage: message,
@@ -156,44 +187,96 @@ const useWebSocket = (url: string | null) => {
           }));
         } catch (error) {
           console.error("Failed to parse WebSocket message:", error);
-          setState((prev) => ({
-            ...prev,
-            error: `Failed to parse message: ${
-              error instanceof Error ? error.message : "Unknown error"
-            }`,
-          }));
+          // Don't disconnect for parse errors, just log them
+          console.warn("Raw message data:", event.data);
         }
       };
 
       websocketRef.current.onerror = (error) => {
         console.error("WebSocket error:", error);
-        if (connectionTimeoutRef.current) {
-          clearTimeout(connectionTimeoutRef.current);
-          connectionTimeoutRef.current = null;
+
+        // Don't clear connection timeout here, let onclose handle it
+        // This prevents race conditions between error and close events
+
+        let errorMessage = "Connection error occurred";
+        // More specific error handling
+        if (error && typeof error === "object" && "message" in error) {
+          const msg = (error as any).message?.toLowerCase() || "";
+          if (msg.includes("reset") || msg.includes("connection reset")) {
+            errorMessage = "Connection was reset";
+          } else if (msg.includes("timeout")) {
+            errorMessage = "Connection timed out";
+          } else if (msg.includes("refused") || msg.includes("econnrefused")) {
+            errorMessage = "Connection refused - server may be offline";
+          } else if (msg.includes("network") || msg.includes("unreachable")) {
+            errorMessage = "Network error - check your connection";
+          }
         }
+
+        // Only update error, don't change connection state
+        // Let onclose handle the connection state changes
         setState((prev) => ({
           ...prev,
-          error: "Connection error occurred",
-          isConnected: false,
-          isConnecting: false,
+          error: errorMessage,
         }));
       };
 
-      websocketRef.current.onclose = () => {
+      websocketRef.current.onclose = (event) => {
         if (connectionTimeoutRef.current) {
           clearTimeout(connectionTimeoutRef.current);
           connectionTimeoutRef.current = null;
+        }
+
+        // More specific close reason handling
+        let closeReason = "";
+        let shouldReconnect = false;
+
+        if (event.code === 1006) {
+          closeReason = "Connection lost unexpectedly";
+          shouldReconnect = true;
+        } else if (event.code === 1000) {
+          closeReason = "Connection closed normally";
+          shouldReconnect = false; // Normal closure, don't reconnect
+        } else if (event.code === 1001) {
+          closeReason = "Server is shutting down";
+          shouldReconnect = false; // Server shutdown, don't reconnect
+        } else if (event.code === 1011) {
+          closeReason = "Server encountered an error";
+          shouldReconnect = true;
+        } else if (event.code >= 3000) {
+          closeReason = "Application-specific error occurred";
+          shouldReconnect = true;
+        } else {
+          closeReason = `Connection closed (code: ${event.code})`;
+          shouldReconnect = event.code !== 1000 && event.code !== 1001;
         }
 
         setState((prev) => ({
           ...prev,
           isConnected: false,
           isConnecting: false,
+          error: prev.error || closeReason,
         }));
 
-        // Auto-reconnect if we haven't exceeded max attempts
-        if (connectionAttemptsRef.current < MAX_RECONNECT_ATTEMPTS) {
-          attemptReconnect();
+        // Only auto-reconnect for specific cases and if we haven't exceeded max attempts
+        if (
+          shouldReconnect &&
+          connectionAttemptsRef.current < MAX_RECONNECT_ATTEMPTS
+        ) {
+          console.log(
+            `🔄 WebSocket closed (${event.code}), will attempt reconnection`
+          );
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              attemptReconnect();
+            }
+          }, 2000); // Fixed 2-second delay for all reconnections
+        } else if (!shouldReconnect) {
+          console.log(
+            `ℹ️ WebSocket closed normally (${event.code}), no reconnection needed`
+          );
+        } else {
+          console.log(`❌ Max reconnection attempts reached, stopping`);
         }
       };
     } catch (error) {

@@ -4,7 +4,6 @@ import React, {
   useCallback,
   useContext,
   useEffect,
-  useRef,
   useState,
 } from "react";
 import useWebSocket from "./useWebSocket";
@@ -22,10 +21,13 @@ interface ESP8266Data {
   ultrasonicSensorConnected?: boolean;
   distance?: number;
   foodLevelPercentage?: number;
-  ledState?: boolean;
   relayState?: boolean;
+  motorOpened?: boolean;
   feederConfig?: FeederConfig;
   lastUpdate?: number;
+  // Add proxy server status
+  esp8266Connected?: boolean;
+  proxyConnected?: boolean;
 }
 
 interface ESP8266ContextType {
@@ -45,7 +47,6 @@ interface ESP8266ContextType {
   setDeviceUrl: (url: string) => void;
 
   // Device controls
-  toggleLED: () => boolean;
   toggleRelay: () => boolean;
   setSensorReadingInterval: (interval: number) => boolean;
   requestSensorData: () => boolean;
@@ -61,6 +62,10 @@ interface ESP8266ContextType {
   savedDevices: SavedDevice[];
   addSavedDevice: (device: SavedDevice) => void;
   removeSavedDevice: (id: string) => void;
+
+  // Proxy server status
+  isProxyConnection: boolean;
+  esp8266Status: "connected" | "disconnected" | "unknown";
 }
 
 export interface SavedDevice {
@@ -72,7 +77,8 @@ export interface SavedDevice {
 
 const ESP8266Context = createContext<ESP8266ContextType | null>(null);
 
-const DEFAULT_AUTO_REFRESH_INTERVAL = 5000; // 5 seconds
+// Increase default interval for proxy connections (server handles auto-updates)
+const DEFAULT_AUTO_REFRESH_INTERVAL = 10000; // 10 seconds for proxy, reduced load
 
 interface ESP8266ProviderProps {
   children: ReactNode;
@@ -89,9 +95,12 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     DEFAULT_AUTO_REFRESH_INTERVAL
   );
 
-  // Add ref to track last LED command to prevent infinite loops
-  const lastLedCommandRef = useRef<number>(0);
-  const LED_COMMAND_DEBOUNCE_MS = 2000; // 2 seconds debounce
+  // Track if this is a proxy connection
+  const isProxyConnection =
+    deviceUrl?.includes("localhost") ||
+    deviceUrl?.includes("127.0.0.1") ||
+    deviceUrl?.includes("10.0.2.2") ||
+    false;
 
   const {
     isConnected,
@@ -112,12 +121,24 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     });
   }, [sendCommand]);
 
-  // Auto-refresh sensor data
+  // Smart auto-refresh: less aggressive for proxy connections
   useEffect(() => {
     if (isConnected && isAutoRefreshEnabled && autoRefreshInterval > 0) {
+      // For proxy connections, rely more on server pushes and reduce polling
+      const actualInterval = isProxyConnection
+        ? autoRefreshInterval * 2
+        : autoRefreshInterval;
+
       const interval = setInterval(() => {
-        requestSensorData();
-      }, autoRefreshInterval);
+        // Only request if we haven't received data recently
+        const timeSinceLastUpdate = deviceData.lastUpdate
+          ? Date.now() - deviceData.lastUpdate
+          : Infinity;
+
+        if (timeSinceLastUpdate > actualInterval * 1.5) {
+          requestSensorData();
+        }
+      }, actualInterval);
 
       return () => clearInterval(interval);
     }
@@ -126,9 +147,11 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     isAutoRefreshEnabled,
     autoRefreshInterval,
     requestSensorData,
+    isProxyConnection,
+    deviceData.lastUpdate,
   ]);
 
-  // Handle incoming messages from ESP8266
+  // Handle incoming messages from ESP8266/Proxy
   useEffect(() => {
     if (!lastMessage) return;
 
@@ -138,6 +161,10 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
           ...prev,
           ...lastMessage.data,
           lastUpdate: lastMessage.timestamp,
+          proxyConnected: isProxyConnection,
+          esp8266Connected: isProxyConnection
+            ? lastMessage.data.esp8266Connected !== false
+            : true,
         }));
         break;
 
@@ -154,22 +181,30 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
           ...prev,
           ...lastMessage.data,
           lastUpdate: lastMessage.timestamp,
+          proxyConnected: isProxyConnection,
+          esp8266Connected: isProxyConnection
+            ? lastMessage.data.esp8266Connected !== false
+            : true,
         }));
         break;
 
       case "error":
-        console.error("ESP8266 Error:", lastMessage.data);
+        console.error("ESP8266/Proxy Error:", lastMessage.data);
+        // Update ESP8266 status if proxy reports ESP8266 issues
+        if (
+          isProxyConnection &&
+          lastMessage.data?.message?.includes("ESP8266")
+        ) {
+          setDeviceData((prev) => ({
+            ...prev,
+            esp8266Connected: false,
+          }));
+        }
         break;
     }
-  }, [lastMessage]);
+  }, [lastMessage, isProxyConnection]);
 
   // Device control functions
-  const toggleLED = (): boolean => {
-    return sendCommand({
-      action: "toggle_led",
-    });
-  };
-
   const toggleRelay = (): boolean => {
     return sendCommand({
       action: "toggle_relay",
@@ -183,29 +218,7 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     });
   };
 
-  // Auto LED control based on connection status
-  useEffect(() => {
-    const now = Date.now();
-
-    // Debounce LED commands to prevent infinite loops
-    if (now - lastLedCommandRef.current < LED_COMMAND_DEBOUNCE_MS) {
-      return;
-    }
-
-    if (isConnected && deviceData.ledState === false) {
-      // Turn LED ON when connected (if not already on)
-      console.log("Auto-turning LED ON (connected)");
-      sendCommand({ action: "toggle_led" });
-      lastLedCommandRef.current = now;
-    } else if (!isConnected && deviceData.ledState === true) {
-      // Turn LED OFF when disconnected (if not already off)
-      console.log("Auto-turning LED OFF (disconnected)");
-      sendCommand({ action: "toggle_led" });
-      lastLedCommandRef.current = now;
-    }
-  }, [isConnected, deviceData.ledState, sendCommand]);
-
-  // Connection management
+  // Connection management functions
   const setDeviceUrl = (url: string) => {
     setDeviceUrlState(url);
   };
@@ -222,17 +235,58 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     wsResetConnection();
   };
 
-  // Saved devices management
+  // Saved devices management (with localStorage persistence)
   const addSavedDevice = (device: SavedDevice) => {
+    const updatedDevice = { ...device, lastConnected: Date.now() };
     setSavedDevices((prev) => {
-      const filtered = prev.filter((d) => d.id !== device.id);
-      return [...filtered, { ...device, lastConnected: Date.now() }];
+      const newDevices = [
+        ...prev.filter((d) => d.id !== device.id),
+        updatedDevice,
+      ];
+      try {
+        localStorage.setItem("savedDevices", JSON.stringify(newDevices));
+      } catch (error) {
+        console.warn("Failed to save device to localStorage:", error);
+      }
+      return newDevices;
     });
   };
 
   const removeSavedDevice = (id: string) => {
-    setSavedDevices((prev) => prev.filter((d) => d.id !== id));
+    setSavedDevices((prev) => {
+      const newDevices = prev.filter((device) => device.id !== id);
+      try {
+        localStorage.setItem("savedDevices", JSON.stringify(newDevices));
+      } catch (error) {
+        console.warn("Failed to remove device from localStorage:", error);
+      }
+      return newDevices;
+    });
   };
+
+  // Load saved devices on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("savedDevices");
+      if (saved) {
+        setSavedDevices(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.warn("Failed to load saved devices from localStorage:", error);
+    }
+  }, []);
+
+  // Determine ESP8266 connection status
+  const esp8266Status: "connected" | "disconnected" | "unknown" =
+    isProxyConnection
+      ? deviceData.esp8266Connected === true
+        ? "connected"
+        : deviceData.esp8266Connected === false
+        ? "disconnected"
+        : "unknown"
+      : isConnected
+      ? "connected"
+      : "disconnected";
 
   const contextValue: ESP8266ContextType = {
     // Connection state
@@ -251,7 +305,6 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     setDeviceUrl,
 
     // Device controls
-    toggleLED,
     toggleRelay,
     setSensorReadingInterval,
     requestSensorData,
@@ -267,6 +320,10 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     savedDevices,
     addSavedDevice,
     removeSavedDevice,
+
+    // Proxy server status
+    isProxyConnection,
+    esp8266Status,
   };
 
   return (
@@ -279,7 +336,7 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
 export const useESP8266 = (): ESP8266ContextType => {
   const context = useContext(ESP8266Context);
   if (!context) {
-    throw new Error("useESP8266 must be used within ESP8266Provider");
+    throw new Error("useESP8266 must be used within an ESP8266Provider");
   }
   return context;
 };

@@ -3,40 +3,57 @@
 #include <ArduinoJson.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <Stepper.h>
+#include <EEPROM.h>
 
-// WiFi Configuration
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+#ifndef WIFI_SSID
+#define WIFI_SSID "CPUGAD Co-working Space"
+#define WIFI_PASSWORD "**CPUExcel1905!"
+#endif
 
-// WebSocket Server Configuration
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
+
 WebSocketsServer webSocket = WebSocketsServer(81);
 
-// DS18B20 Temperature Sensor Configuration
-#define ONE_WIRE_BUS D4  // Data wire is connected to digital pin D4
+#define ONE_WIRE_BUS D4  
 OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature temperatureSensor(&oneWire);
 
-// HC-SR04 Ultrasonic Sensor Configuration
-#define TRIG_PIN D5      // Trigger pin for HC-SR04
-#define ECHO_PIN D6      // Echo pin for HC-SR04
+#define TRIG_PIN D1      
+#define ECHO_PIN D2      
+#define RELAY_PIN D0         
 
-// GPIO Pin Configuration
-#define LED_PIN D1        // Built-in LED or external LED
-#define RELAY_PIN D2      // Relay control pin
+#define STEPPER_IN1 D5    
+#define STEPPER_IN2 D6   
+#define STEPPER_IN3 D7   
+#define STEPPER_IN4 D8   
 
-// Device State Variables
-bool ledState = false;
+const int STEPS_PER_REV = 2048;
+const int HALF_REV = STEPS_PER_REV / 2;
+const int STEPS_PER_MOVE = 100; 
+Stepper stepperMotor(STEPS_PER_REV, STEPPER_IN1, STEPPER_IN3, STEPPER_IN2, STEPPER_IN4);
+
 bool relayState = false;
+bool motorOpened = false;
+bool stepperMoving = false;
+int stepperStepsRemaining = 0;
+bool stepperDirection = true; 
+
 unsigned long lastSensorRead = 0;
-unsigned long sensorInterval = 5000; // Default 5 seconds
+unsigned long sensorInterval = 5000; 
 unsigned long lastHeartbeat = 0;
+unsigned long lastWiFiCheck = 0;
+unsigned long lastStepperMove = 0;
 
-// Food Level Configuration (adjust these values based on your feeder dimensions)
-const float FEEDER_HEIGHT = 20.0;    // Total height of feeder in cm
-const float MIN_DISTANCE = 3.0;      // Minimum distance when feeder is full (sensor to food surface) in cm
-const float MAX_DISTANCE = 18.0;     // Maximum distance when feeder is empty in cm
+unsigned long wifiReconnectAttempts = 0;
+const unsigned long WIFI_CHECK_INTERVAL = 30000; 
+const unsigned long MAX_WIFI_RECONNECT_ATTEMPTS = 5;
 
-// Sensor Data Structure
+const float FEEDER_HEIGHT = 20.0;    
+const float MIN_DISTANCE = 3.0;      
+const float MAX_DISTANCE = 18.0;     
+
 struct SensorData {
   float temperature;
   bool temperatureSensorConnected;
@@ -47,18 +64,40 @@ struct SensorData {
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n=== ESP8266 WebSocket Server with DS18B20 & HC-SR04 ===");
+  delay(100);
   
-  // Initialize GPIO pins
-  pinMode(LED_PIN, OUTPUT);
+  Serial.println("\n=== ESP8266 Fish Feeder WebSocket Server ===");
+  Serial.println("Pin Layout:");
+  Serial.println("  DS18B20 Temp: D4 (GPIO2)");
+  Serial.println("  Ultrasonic TRIG: D1 (GPIO5)");
+  Serial.println("  Ultrasonic ECHO: D2 (GPIO4)");
+  Serial.println("  Relay: D0 (GPIO16)");
+  Serial.println("  Stepper: D5,D6,D7,D8 (GPIO14,12,13,15)");
+  Serial.println("========================================\n");
+  
   pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW); 
+  
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
+  digitalWrite(TRIG_PIN, LOW);
   
-  // Initialize DS18B20 temperature sensor
+  pinMode(STEPPER_IN1, OUTPUT);
+  pinMode(STEPPER_IN2, OUTPUT);
+  pinMode(STEPPER_IN3, OUTPUT);
+  pinMode(STEPPER_IN4, OUTPUT);
+  
+  digitalWrite(STEPPER_IN1, LOW);
+  digitalWrite(STEPPER_IN2, LOW);
+  digitalWrite(STEPPER_IN3, LOW);
+  digitalWrite(STEPPER_IN4, LOW);
+  
+  stepperMotor.setSpeed(10); 
+  
+  EEPROM.begin(512);
+  
   temperatureSensor.begin();
   
-  // Check if DS18B20 sensor is connected
   int deviceCount = temperatureSensor.getDeviceCount();
   Serial.println("Found " + String(deviceCount) + " DS18B20 device(s)");
   
@@ -70,60 +109,140 @@ void setup() {
     Serial.println("DS18B20 temperature sensor initialized successfully");
   }
   
-  // Initialize HC-SR04 ultrasonic sensor
-  digitalWrite(TRIG_PIN, LOW);
   sensors.ultrasonicSensorConnected = true;
   Serial.println("HC-SR04 ultrasonic sensor initialized");
+  Serial.println("✅ Ultrasonic sensor on dedicated pins (no conflicts)");
   
-  // Set initial states
-  digitalWrite(LED_PIN, LOW);
-  digitalWrite(RELAY_PIN, LOW);
+  connectToWiFi();
   
-  // Connect to WiFi
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
-  
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+  if (WiFi.status() == WL_CONNECTED) {
+    webSocket.begin();
+    webSocket.onEvent(webSocketEvent);
+    
+    Serial.println("Setup complete! Ready for connections.");
+    Serial.println("Connect your app to: ws://" + WiFi.localIP().toString() + ":81");
+    Serial.println("Feeder Configuration:");
+    Serial.println("- Total Height: " + String(FEEDER_HEIGHT) + " cm");
+    Serial.println("- Min Distance (Full): " + String(MIN_DISTANCE) + " cm");
+    Serial.println("- Max Distance (Empty): " + String(MAX_DISTANCE) + " cm");
   }
-  
-  Serial.println();
-  Serial.println("WiFi connected!");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
-  Serial.print("WebSocket server started on port: 81");
-  Serial.println();
-  
-  // Initialize WebSocket server
-  webSocket.begin();
-  webSocket.onEvent(webSocketEvent);
-  
-  Serial.println("Setup complete! Ready for connections.");
-  Serial.println("Connect your app to: ws://" + WiFi.localIP().toString() + ":81");
-  Serial.println("Feeder Configuration:");
-  Serial.println("- Total Height: " + String(FEEDER_HEIGHT) + " cm");
-  Serial.println("- Min Distance (Full): " + String(MIN_DISTANCE) + " cm");
-  Serial.println("- Max Distance (Empty): " + String(MAX_DISTANCE) + " cm");
 }
 
 void loop() {
-  webSocket.loop();
+  ESP.wdtFeed();
   
-  // Read sensors periodically
-  if (millis() - lastSensorRead >= sensorInterval) {
+  checkWiFiConnection();
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    webSocket.loop();
+  }
+  
+  handleStepperMotor();
+  
+  if (!stepperMoving && millis() - lastSensorRead >= sensorInterval) {
     readSensors();
     broadcastSensorData();
     lastSensorRead = millis();
   }
   
-  // Handle heartbeat timeout (disconnect inactive clients)
-  if (millis() - lastHeartbeat > 60000) { // 60 seconds timeout
-    // Could implement client timeout logic here
+  if (millis() - lastHeartbeat > 60000) { 
     lastHeartbeat = millis();
   }
   
-  delay(10); // Small delay to prevent watchdog reset
+  delay(5);
+}
+
+void connectToWiFi() {
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(ssid);
+  
+  WiFi.begin(ssid, password);
+  
+  int attempts = 0;
+  while (WiFi.status() != WL_CONNECTED && attempts < 30) { 
+    delay(500);
+    Serial.print(".");
+    attempts++;
+    ESP.wdtFeed(); 
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println();
+    Serial.println("WiFi connected!");
+    Serial.print("IP address: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("Signal strength: ");
+    Serial.print(WiFi.RSSI());
+    Serial.println(" dBm");
+    wifiReconnectAttempts = 0;
+  } else {
+    Serial.println();
+    Serial.println("Failed to connect to WiFi!");
+    Serial.println("Device will continue trying to reconnect...");
+  }
+}
+
+void checkWiFiConnection() {
+  if (millis() - lastWiFiCheck >= WIFI_CHECK_INTERVAL) {
+    lastWiFiCheck = millis();
+    
+    if (WiFi.status() != WL_CONNECTED) {
+      Serial.println("WiFi disconnected. Attempting reconnection...");
+      
+      if (wifiReconnectAttempts < MAX_WIFI_RECONNECT_ATTEMPTS) {
+        wifiReconnectAttempts++;
+        Serial.println("Reconnect attempt: " + String(wifiReconnectAttempts));
+        
+        WiFi.disconnect();
+        delay(1000);
+        ESP.wdtFeed();
+        
+        connectToWiFi();
+      } else {
+        Serial.println("Max WiFi reconnection attempts reached. Restarting ESP8266...");
+        ESP.restart();
+      }
+    } else {
+      wifiReconnectAttempts = 0; 
+    }
+  }
+}
+
+void handleStepperMotor() {
+  if (stepperMoving && millis() - lastStepperMove >= 10) { 
+    lastStepperMove = millis();
+    
+    if (stepperStepsRemaining > 0) {
+      stepperMotor.step(stepperDirection ? 1 : -1);
+      stepperStepsRemaining--;
+      
+      if (stepperStepsRemaining % 50 == 0) {
+        ESP.wdtFeed();
+      }
+    } else {
+      stepperMoving = false;
+      motorOpened = stepperDirection;
+      
+      Serial.println("Stepper movement completed. Motor " + 
+                    String(motorOpened ? "OPENED" : "CLOSED"));
+        
+      broadcastSensorData();
+    }
+  }
+}
+
+void startStepperMovement(bool direction) {
+  if (stepperMoving) {
+    Serial.println("Stepper already moving, ignoring command");
+    return;
+  }
+  
+  stepperDirection = direction;
+  stepperStepsRemaining = HALF_REV;
+  stepperMoving = true;
+  
+  Serial.println("Starting stepper movement: " + 
+                String(direction ? "OPENING" : "CLOSING"));
 }
 
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
@@ -136,7 +255,6 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
       IPAddress ip = webSocket.remoteIP(num);
       Serial.printf("[%u] Connected from %d.%d.%d.%d\n", num, ip[0], ip[1], ip[2], ip[3]);
       
-      // Send initial device state
       sendDeviceStatus(num);
       break;
     }
@@ -156,12 +274,11 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 }
 
 void handleWebSocketMessage(uint8_t num, const char* message) {
-  // Parse JSON message
-  DynamicJsonDocument doc(1024);
+  StaticJsonDocument<256> doc; 
   DeserializationError error = deserializeJson(doc, message);
   
   if (error) {
-    Serial.println("Failed to parse JSON message");
+    Serial.println("Failed to parse JSON message: " + String(error.c_str()));
     sendError(num, "Invalid JSON format");
     return;
   }
@@ -169,11 +286,7 @@ void handleWebSocketMessage(uint8_t num, const char* message) {
   String action = doc["action"];
   Serial.println("Action: " + action);
   
-  // Handle different actions
-  if (action == "toggle_led") {
-    handleLEDToggle(num);
-  }
-  else if (action == "toggle_relay") {
+  if (action == "toggle_relay") {
     handleRelayToggle(num);
   }
   else if (action == "get_sensors") {
@@ -192,35 +305,24 @@ void handleWebSocketMessage(uint8_t num, const char* message) {
   }
 }
 
-void handleLEDToggle(uint8_t num) {
-  ledState = !ledState;
-  digitalWrite(LED_PIN, ledState ? HIGH : LOW);
-  
-  Serial.println("LED toggled to: " + String(ledState ? "ON" : "OFF"));
-  
-  // Send response
-  DynamicJsonDocument response(512);
-  response["type"] = "control_response";
-  response["data"]["ledState"] = ledState;
-  response["data"]["action"] = "led_toggle";
-  response["timestamp"] = millis();
-  
-  String responseStr;
-  serializeJson(response, responseStr);
-  webSocket.sendTXT(num, responseStr);
-}
-
 void handleRelayToggle(uint8_t num) {
   relayState = !relayState;
   digitalWrite(RELAY_PIN, relayState ? HIGH : LOW);
   
   Serial.println("Relay toggled to: " + String(relayState ? "ON" : "OFF"));
   
-  // Send response
-  DynamicJsonDocument response(512);
+  if (relayState && !motorOpened && !stepperMoving) {
+    startStepperMovement(true); 
+  } else if (!relayState && motorOpened && !stepperMoving) {
+    startStepperMovement(false); 
+  }
+  
+  StaticJsonDocument<256> response;
   response["type"] = "control_response";
   response["data"]["relayState"] = relayState;
-  response["data"]["action"] = "relay_toggle";
+  response["data"]["motorOpened"] = motorOpened;
+  response["data"]["action"] = "toggle_relay";
+  response["data"]["success"] = true;
   response["timestamp"] = millis();
   
   String responseStr;
@@ -229,14 +331,15 @@ void handleRelayToggle(uint8_t num) {
 }
 
 void setSensorInterval(uint8_t num, int interval) {
-  if (interval >= 1000 && interval <= 60000) { // 1 second to 1 minute
+  if (interval >= 1000 && interval <= 60000) { 
     sensorInterval = interval;
     Serial.println("Sensor interval set to: " + String(interval) + "ms");
     
-    DynamicJsonDocument response(512);
+    StaticJsonDocument<256> response;
     response["type"] = "control_response";
     response["data"]["sensorInterval"] = interval;
-    response["data"]["action"] = "interval_set";
+    response["data"]["action"] = "set_sensor_interval";
+    response["data"]["success"] = true;
     response["timestamp"] = millis();
     
     String responseStr;
@@ -250,9 +353,11 @@ void setSensorInterval(uint8_t num, int interval) {
 void handlePing(uint8_t num) {
   lastHeartbeat = millis();
   
-  DynamicJsonDocument response(256);
+  StaticJsonDocument<128> response;
   response["type"] = "status";
   response["data"]["pong"] = true;
+  response["data"]["uptime"] = millis();
+  response["data"]["freeHeap"] = ESP.getFreeHeap();
   response["timestamp"] = millis();
   
   String responseStr;
@@ -261,32 +366,46 @@ void handlePing(uint8_t num) {
 }
 
 float readUltrasonicDistance() {
-  // Clear the trigger pin
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
   
-  // Send a 10µs pulse to trigger pin
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
+  float validReadings[3];
+  int validCount = 0;
   
-  // Read the echo pin and calculate distance
-  unsigned long duration = pulseIn(ECHO_PIN, HIGH, 30000); // 30ms timeout
+  for (int i = 0; i < 3; i++) {
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+    
+    unsigned long duration = pulseIn(ECHO_PIN, HIGH, 30000); 
+    
+    if (duration > 0) {
+      float distance = (duration * 0.0343) / 2;
+
+      if (distance >= 1.0 && distance <= 400.0) {
+        validReadings[validCount] = distance;
+        validCount++;
+      }
+    }
+    
+    delay(10); 
+    ESP.wdtFeed();
+  }
   
-  if (duration == 0) {
-    // Timeout occurred, sensor might be disconnected
+  if (validCount == 0) {
     sensors.ultrasonicSensorConnected = false;
     return NAN;
   }
   
   sensors.ultrasonicSensorConnected = true;
   
-  // Calculate distance in centimeters
-  // Speed of sound = 343 m/s = 0.0343 cm/µs
-  // Distance = (Duration × Speed of Sound) / 2
-  float distance = (duration * 0.0343) / 2;
+  float sum = 0;
+  for (int i = 0; i < validCount; i++) {
+    sum += validReadings[i];
+  }
   
-  return distance;
+  return sum / validCount;
 }
 
 float calculateFoodLevel(float distance) {
@@ -294,30 +413,25 @@ float calculateFoodLevel(float distance) {
     return NAN;
   }
   
-  // Clamp distance to valid range
   distance = constrain(distance, MIN_DISTANCE, MAX_DISTANCE);
   
-  // Calculate percentage (inverted - smaller distance = more food)
   float percentage = ((MAX_DISTANCE - distance) / (MAX_DISTANCE - MIN_DISTANCE)) * 100;
   
-  // Ensure percentage is between 0-100
   percentage = constrain(percentage, 0, 100);
   
   return percentage;
 }
 
 void readSensors() {
-  // Read DS18B20 Temperature Sensor
+  ESP.wdtFeed(); 
+  
   if (sensors.temperatureSensorConnected) {
-    // Request temperature reading from DS18B20
     temperatureSensor.requestTemperatures();
     
-    // Get temperature in Celsius
     sensors.temperature = temperatureSensor.getTempCByIndex(0);
     
-    // Check if reading is valid
-    if (sensors.temperature == DEVICE_DISCONNECTED_C) {
-      Serial.println("Error: DS18B20 sensor disconnected");
+    if (sensors.temperature == DEVICE_DISCONNECTED_C || sensors.temperature < -40 || sensors.temperature > 85) {
+      Serial.println("Error: DS18B20 sensor disconnected or invalid reading");
       sensors.temperature = NAN;
       sensors.temperatureSensorConnected = false;
     }
@@ -325,47 +439,51 @@ void readSensors() {
     sensors.temperature = NAN;
   }
   
-  // Read HC-SR04 Ultrasonic Sensor
   sensors.distance = readUltrasonicDistance();
   sensors.foodLevelPercentage = calculateFoodLevel(sensors.distance);
   
-  // Debug output
   Serial.println("--- Sensor Readings ---");
   if (!isnan(sensors.temperature)) {
-    Serial.println("Temperature: " + String(sensors.temperature, 1) + "°C");
+    Serial.println("Temp: " + String(sensors.temperature, 1) + "°C");
   } else {
-    Serial.println("Temperature: Error/Disconnected");
+    Serial.println("Temp: Error");
   }
   
   if (!isnan(sensors.distance)) {
-    Serial.println("Distance: " + String(sensors.distance, 1) + " cm");
-    Serial.println("Food Level: " + String(sensors.foodLevelPercentage, 1) + "%");
+    Serial.println("Distance: " + String(sensors.distance, 1) + "cm");
+    Serial.println("Food: " + String(sensors.foodLevelPercentage, 1) + "%");
   } else {
-    Serial.println("Ultrasonic: Error/Disconnected");
+    Serial.println("Distance: Error");
   }
+  
+  Serial.println("Relay: " + String(relayState ? "ON" : "OFF") + 
+                " | Motor: " + String(motorOpened ? "OPEN" : "CLOSED"));
+  Serial.println("Free Heap: " + String(ESP.getFreeHeap()) + " bytes");
   Serial.println("----------------------");
 }
 
 void sendSensorData(uint8_t num) {
-  DynamicJsonDocument response(1024);
+  StaticJsonDocument<512> response; 
   response["type"] = "sensor_data";
   
-  // Include temperature if valid
+  JsonObject data = response.createNestedObject("data");
+  
   if (!isnan(sensors.temperature) && sensors.temperatureSensorConnected) {
-    response["data"]["temperature"] = sensors.temperature;
+    data["temperature"] = round(sensors.temperature * 10) / 10.0;
   }
-  
-  // Include ultrasonic sensor data if valid
+
   if (!isnan(sensors.distance) && sensors.ultrasonicSensorConnected) {
-    response["data"]["distance"] = round(sensors.distance * 10) / 10.0; // Round to 1 decimal
-    response["data"]["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
+    data["distance"] = round(sensors.distance * 10) / 10.0;
+    data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
   }
   
-  response["data"]["temperatureSensorConnected"] = sensors.temperatureSensorConnected;
-  response["data"]["ultrasonicSensorConnected"] = sensors.ultrasonicSensorConnected;
-  response["data"]["sensorConnected"] = sensors.temperatureSensorConnected; // Keep for backward compatibility
-  response["data"]["ledState"] = ledState;
-  response["data"]["relayState"] = relayState;
+  data["temperatureSensorConnected"] = sensors.temperatureSensorConnected;
+  data["ultrasonicSensorConnected"] = sensors.ultrasonicSensorConnected;
+  data["sensorConnected"] = sensors.temperatureSensorConnected; 
+  data["relayState"] = relayState;
+  data["motorOpened"] = motorOpened;
+  data["stepperMoving"] = stepperMoving;
+  
   response["timestamp"] = millis();
   
   String responseStr;
@@ -374,25 +492,27 @@ void sendSensorData(uint8_t num) {
 }
 
 void broadcastSensorData() {
-  DynamicJsonDocument response(1024);
+  StaticJsonDocument<512> response;
   response["type"] = "sensor_data";
   
-  // Include temperature if valid
+  JsonObject data = response.createNestedObject("data");
+  
   if (!isnan(sensors.temperature) && sensors.temperatureSensorConnected) {
-    response["data"]["temperature"] = sensors.temperature;
+    data["temperature"] = round(sensors.temperature * 10) / 10.0;
   }
   
-  // Include ultrasonic sensor data if valid
   if (!isnan(sensors.distance) && sensors.ultrasonicSensorConnected) {
-    response["data"]["distance"] = round(sensors.distance * 10) / 10.0; // Round to 1 decimal
-    response["data"]["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
+    data["distance"] = round(sensors.distance * 10) / 10.0;
+    data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
   }
   
-  response["data"]["temperatureSensorConnected"] = sensors.temperatureSensorConnected;
-  response["data"]["ultrasonicSensorConnected"] = sensors.ultrasonicSensorConnected;
-  response["data"]["sensorConnected"] = sensors.temperatureSensorConnected; // Keep for backward compatibility
-  response["data"]["ledState"] = ledState;
-  response["data"]["relayState"] = relayState;
+  data["temperatureSensorConnected"] = sensors.temperatureSensorConnected;
+  data["ultrasonicSensorConnected"] = sensors.ultrasonicSensorConnected;
+  data["sensorConnected"] = sensors.temperatureSensorConnected;
+  data["relayState"] = relayState;
+  data["motorOpened"] = motorOpened;
+  data["stepperMoving"] = stepperMoving;
+  
   response["timestamp"] = millis();
   
   String responseStr;
@@ -401,33 +521,36 @@ void broadcastSensorData() {
 }
 
 void sendDeviceStatus(uint8_t num) {
-  readSensors(); // Get latest sensor data
+  readSensors(); 
   
-  DynamicJsonDocument response(1024);
+  StaticJsonDocument<512> response;
   response["type"] = "status";
-  response["data"]["connected"] = true;
-  response["data"]["ledState"] = ledState;
-  response["data"]["relayState"] = relayState;
-  response["data"]["sensorInterval"] = sensorInterval;
-  response["data"]["temperatureSensorConnected"] = sensors.temperatureSensorConnected;
-  response["data"]["ultrasonicSensorConnected"] = sensors.ultrasonicSensorConnected;
-  response["data"]["sensorConnected"] = sensors.temperatureSensorConnected; // Keep for backward compatibility
   
-  // Include current temperature reading
+  JsonObject data = response.createNestedObject("data");
+  data["connected"] = true;
+  data["relayState"] = relayState;
+  data["motorOpened"] = motorOpened;
+  data["stepperMoving"] = stepperMoving;
+  data["sensorInterval"] = sensorInterval;
+  data["temperatureSensorConnected"] = sensors.temperatureSensorConnected;
+  data["ultrasonicSensorConnected"] = sensors.ultrasonicSensorConnected;
+  data["sensorConnected"] = sensors.temperatureSensorConnected;
+  data["freeHeap"] = ESP.getFreeHeap();
+  data["uptime"] = millis();
+  
   if (!isnan(sensors.temperature) && sensors.temperatureSensorConnected) {
-    response["data"]["temperature"] = sensors.temperature;
+    data["temperature"] = round(sensors.temperature * 10) / 10.0;
   }
   
-  // Include current ultrasonic sensor reading
   if (!isnan(sensors.distance) && sensors.ultrasonicSensorConnected) {
-    response["data"]["distance"] = round(sensors.distance * 10) / 10.0;
-    response["data"]["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
+    data["distance"] = round(sensors.distance * 10) / 10.0;
+    data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
   }
   
-  // Include feeder configuration
-  response["data"]["feederConfig"]["height"] = FEEDER_HEIGHT;
-  response["data"]["feederConfig"]["minDistance"] = MIN_DISTANCE;
-  response["data"]["feederConfig"]["maxDistance"] = MAX_DISTANCE;
+  JsonObject config = data.createNestedObject("feederConfig");
+  config["height"] = FEEDER_HEIGHT;
+  config["minDistance"] = MIN_DISTANCE;
+  config["maxDistance"] = MAX_DISTANCE;
   
   response["timestamp"] = millis();
   
@@ -437,7 +560,7 @@ void sendDeviceStatus(uint8_t num) {
 }
 
 void sendError(uint8_t num, String errorMessage) {
-  DynamicJsonDocument response(512);
+  StaticJsonDocument<256> response;
   response["type"] = "error";
   response["data"]["message"] = errorMessage;
   response["timestamp"] = millis();
