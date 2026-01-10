@@ -34,7 +34,6 @@
 // MQTT Topic Prefix
 #define MQTT_TOPIC_PREFIX "floyd"
 
-// Enable/Disable Features
 #define ENABLE_MQTT true
 #define ENABLE_LOCAL_WEBSOCKET true
 
