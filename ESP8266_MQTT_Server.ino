@@ -24,11 +24,11 @@
 #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
 #endif
 
-// MQTT Configuration (HiveMQ Cloud or other broker)
-#define MQTT_BROKER "YOUR_CLUSTER.hivemq.cloud"
+// MQTT Configuration
+#define MQTT_BROKER "54ec80585d014da3b9bb496cffb611a9.s1.eu.hivemq.cloud"
 #define MQTT_PORT 8883
-#define MQTT_USERNAME "YOUR_USERNAME"
-#define MQTT_PASSWORD "YOUR_PASSWORD"
+#define MQTT_USERNAME "FloydApp"
+#define MQTT_PASSWORD "FloydApp@123"
 #define DEVICE_ID "floyd_001"
 
 // MQTT Topic Prefix
