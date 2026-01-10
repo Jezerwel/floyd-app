@@ -46,6 +46,9 @@ const MAPPING = {
   xmark: "close",
   link: "link",
   trash: "delete",
+  globe: "language",
+  bell: "notifications-none",
+  "server.rack": "dns",
 } as const;
 
 /**

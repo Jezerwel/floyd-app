@@ -142,6 +142,19 @@ export interface ESP8266Config {
 }
 
 /**
+ * MQTT broker configuration
+ */
+export interface MQTTConfig {
+  brokerUrl: string;
+  username: string;
+  password: string;
+  clientId: string;
+  topicPrefix: string;
+  reconnectInterval: number;
+  keepAlive: number;
+}
+
+/**
  * Server configuration
  */
 export interface ServerConfig {
@@ -150,6 +163,8 @@ export interface ServerConfig {
   maxClients: number;
   feederConfig: FeederConfig;
   esp8266Config: ESP8266Config;
+  mqttConfig?: MQTTConfig;
+  useMqtt: boolean;
 }
 
 /**
@@ -180,19 +195,31 @@ export const DEFAULT_FEEDER_CONFIG: FeederConfig = {
 };
 
 export const DEFAULT_ESP8266_CONFIG: ESP8266Config = {
-  host: "172.31.5.134",
-  port: 81,
+  host: process.env.ESP8266_HOST || "172.31.5.134",
+  port: parseInt(process.env.ESP8266_PORT || "81", 10),
   reconnectDelay: 3000,
   maxReconnectAttempts: 5,
   connectionTimeout: 10000,
 };
 
+export const DEFAULT_MQTT_CONFIG: MQTTConfig = {
+  brokerUrl: process.env.MQTT_BROKER_URL || "mqtt://broker.hivemq.com:1883",
+  username: process.env.MQTT_USERNAME || "",
+  password: process.env.MQTT_PASSWORD || "",
+  clientId: process.env.MQTT_CLIENT_ID || `floyd-server-${Date.now()}`,
+  topicPrefix: process.env.MQTT_TOPIC_PREFIX || "floyd",
+  reconnectInterval: 5000,
+  keepAlive: 60,
+};
+
 export const DEFAULT_SERVER_CONFIG: ServerConfig = {
-  port: 3001,
+  port: parseInt(process.env.PORT || "3001", 10),
   sensorUpdateInterval: 5000,
   maxClients: 10,
   feederConfig: DEFAULT_FEEDER_CONFIG,
   esp8266Config: DEFAULT_ESP8266_CONFIG,
+  mqttConfig: DEFAULT_MQTT_CONFIG,
+  useMqtt: process.env.USE_MQTT === "true",
 };
 
 export const SENSOR_INTERVAL_LIMITS = {

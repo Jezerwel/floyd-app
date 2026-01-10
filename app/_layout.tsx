@@ -4,13 +4,17 @@ import {
   ThemeProvider,
 } from "@react-navigation/native";
 import { useFonts } from "expo-font";
+import * as SplashScreen from "expo-splash-screen";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { ESP8266Provider } from "@/hooks/useESP8266Context";
+
+SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
@@ -18,13 +22,18 @@ export default function RootLayout() {
     SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
   });
 
+  useEffect(() => {
+    if (loaded) {
+      SplashScreen.hideAsync();
+    }
+  }, [loaded]);
+
   if (!loaded) {
-    // Async font loading only occurs in development.
     return null;
   }
 
   return (
-    <GestureHandlerRootView>
+    <GestureHandlerRootView style={{ flex: 1 }}>
       <ESP8266Provider>
         <ThemeProvider
           value={colorScheme === "light" ? DefaultTheme : DarkTheme}

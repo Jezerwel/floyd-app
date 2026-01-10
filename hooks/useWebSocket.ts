@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface ESP8266Message {
   type: "sensor_data" | "control_response" | "error" | "status";
-  data: any;
+  data: Record<string, unknown>;
   timestamp: number;
 }
 
 export interface ESP8266Command {
   action: string;
-  parameters?: any;
+  parameters?: Record<string, unknown>;
 }
+
+export type ConnectionQuality = "excellent" | "good" | "fair" | "poor" | "disconnected";
 
 export interface WebSocketState {
   isConnected: boolean;
@@ -17,12 +19,23 @@ export interface WebSocketState {
   error: string | null;
   lastMessage: ESP8266Message | null;
   connectionAttempts: number;
+  connectionQuality: ConnectionQuality;
+  latency: number | null;
+  lastPingTime: number | null;
 }
 
 const MAX_RECONNECT_ATTEMPTS = 3; // Reduced from 5
 const RECONNECT_DELAY = 5000; // Increased from 3000ms
 const CONNECTION_TIMEOUT = 15000; // Increased from 10 seconds
 const HEARTBEAT_INTERVAL = 60000; // Increased from 30 seconds (let proxy handle keepalive)
+
+const calculateConnectionQuality = (latency: number | null): ConnectionQuality => {
+  if (latency === null) return "disconnected";
+  if (latency < 100) return "excellent";
+  if (latency < 300) return "good";
+  if (latency < 600) return "fair";
+  return "poor";
+};
 
 const useWebSocket = (url: string | null) => {
   const [state, setState] = useState<WebSocketState>({
@@ -31,7 +44,15 @@ const useWebSocket = (url: string | null) => {
     error: null,
     lastMessage: null,
     connectionAttempts: 0,
+    connectionQuality: "disconnected",
+    latency: null,
+    lastPingTime: null,
   });
+
+  const pendingPingRef = useRef<number | null>(null);
+  const messageBufferRef = useRef<ESP8266Message[]>([]);
+  const debounceTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const MESSAGE_DEBOUNCE_MS = 100;
 
   const websocketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<any>(null);
@@ -52,10 +73,16 @@ const useWebSocket = (url: string | null) => {
       clearTimeout(connectionTimeoutRef.current);
       connectionTimeoutRef.current = null;
     }
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+      debounceTimeoutRef.current = null;
+    }
     if (websocketRef.current) {
       websocketRef.current.close();
       websocketRef.current = null;
     }
+    pendingPingRef.current = null;
+    messageBufferRef.current = [];
   }, []);
 
   const startHeartbeat = useCallback(() => {
@@ -64,23 +91,21 @@ const useWebSocket = (url: string | null) => {
     }
 
     heartbeatTimeoutRef.current = setTimeout(() => {
-      // Check if component is still mounted before sending heartbeat
       if (
         isMountedRef.current &&
         websocketRef.current?.readyState === WebSocket.OPEN
       ) {
-        // Only send ping if we haven't received any message recently
         const lastMessageTime = state.lastMessage?.timestamp || 0;
         const now = Date.now();
 
-        // If we got a message in the last 30 seconds, skip ping
         if (now - lastMessageTime < 30000) {
-          startHeartbeat(); // Just schedule next heartbeat
+          startHeartbeat();
           return;
         }
 
+        pendingPingRef.current = now;
         websocketRef.current.send(JSON.stringify({ action: "ping" }));
-        startHeartbeat(); // Schedule next heartbeat
+        startHeartbeat();
       }
     }, HEARTBEAT_INTERVAL);
   }, [state.lastMessage?.timestamp]);
@@ -165,7 +190,11 @@ const useWebSocket = (url: string | null) => {
           isConnecting: false,
           error: null,
           connectionAttempts: 0,
+          connectionQuality: "good",
         }));
+
+        pendingPingRef.current = Date.now();
+        websocketRef.current?.send(JSON.stringify({ action: "ping" }));
         startHeartbeat();
       };
 
@@ -173,21 +202,47 @@ const useWebSocket = (url: string | null) => {
         try {
           const message: ESP8266Message = JSON.parse(event.data);
 
-          // Validate message structure
           if (!message.type || typeof message.type !== "string") {
             console.warn("Received message with invalid format:", message);
-            return; // Don't set error, just skip invalid messages
+            return;
           }
 
-          // Clear any previous errors on successful message
-          setState((prev) => ({
-            ...prev,
-            lastMessage: message,
-            error: null,
-          }));
+          if (message.type === "status" && (message.data as Record<string, unknown>).pong) {
+            const now = Date.now();
+            if (pendingPingRef.current !== null) {
+              const latency = now - pendingPingRef.current;
+              pendingPingRef.current = null;
+              setState((prev) => ({
+                ...prev,
+                latency,
+                connectionQuality: calculateConnectionQuality(latency),
+                lastPingTime: now,
+                error: null,
+              }));
+              return;
+            }
+          }
+
+          messageBufferRef.current.push(message);
+
+          if (debounceTimeoutRef.current) {
+            clearTimeout(debounceTimeoutRef.current);
+          }
+
+          debounceTimeoutRef.current = setTimeout(() => {
+            const latestMessage = messageBufferRef.current[messageBufferRef.current.length - 1];
+            messageBufferRef.current = [];
+
+            if (latestMessage) {
+              setState((prev) => ({
+                ...prev,
+                lastMessage: latestMessage,
+                error: null,
+              }));
+            }
+          }, MESSAGE_DEBOUNCE_MS);
         } catch (error) {
           console.error("Failed to parse WebSocket message:", error);
-          // Don't disconnect for parse errors, just log them
           console.warn("Raw message data:", event.data);
         }
       };
@@ -305,6 +360,9 @@ const useWebSocket = (url: string | null) => {
       error: null,
       lastMessage: null,
       connectionAttempts: 0,
+      connectionQuality: "disconnected",
+      latency: null,
+      lastPingTime: null,
     });
   }, [cleanup]);
 

@@ -370,6 +370,58 @@ The server provides real-time console logging for monitoring:
 📡 Broadcasted ESP8266 data to 1 clients
 ```
 
+## ☁️ Cloud Deployment (Railway)
+
+### Environment Variables
+
+Set these environment variables in Railway or your cloud provider:
+
+```bash
+# Server Configuration
+PORT=3001
+
+# MQTT Mode (for cloud connectivity)
+USE_MQTT=true
+MQTT_BROKER_URL=ssl://your-cluster.hivemq.cloud:8883
+MQTT_USERNAME=your_username
+MQTT_PASSWORD=your_password
+MQTT_CLIENT_ID=floyd-server
+MQTT_TOPIC_PREFIX=floyd
+
+# Direct ESP8266 Mode (when USE_MQTT=false)
+ESP8266_HOST=192.168.1.100
+ESP8266_PORT=81
+```
+
+### Deploy to Railway
+
+1. Push your code to GitHub
+2. Create a new Railway project
+3. Connect your GitHub repository
+4. Set the environment variables above
+5. Railway will auto-deploy from `server/railway.toml`
+
+### MQTT Architecture
+
+When `USE_MQTT=true`, the server operates in MQTT mode:
+
+```
+Mobile App ↔ WebSocket ↔ Railway Server ↔ MQTT Broker ↔ ESP8266
+```
+
+This allows:
+- **Remote Access**: Control your feeder from anywhere
+- **Multiple Devices**: Support multiple feeders with device IDs
+- **Reliable Messaging**: MQTT QoS ensures message delivery
+
+### Setting Up HiveMQ Cloud
+
+1. Create free account at [HiveMQ Cloud](https://www.hivemq.com/cloud/)
+2. Create a new cluster (free tier: 100 connections)
+3. Create credentials in Access Management
+4. Note your cluster URL (e.g., `abc123.s1.eu.hivemq.cloud`)
+5. Use SSL port 8883 for secure connections
+
 ## 🔐 Security Considerations
 
 - **Local Network**: Designed for local network use

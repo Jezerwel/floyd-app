@@ -1,38 +1,68 @@
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import React from "react";
-import { StyleSheet, Text, View } from "react-native";
+import React, { useEffect, useRef } from "react";
+import { Animated, StyleSheet, Text, View } from "react-native";
 import { IconSymbol } from "./IconSymbol";
 
 interface StatCardProps {
   title: string;
   value?: string | number;
   unit?: string;
-  icon: any;
+  icon: string;
   color: string;
   children?: React.ReactNode;
+  delay?: number;
 }
 
-export const StatCard: React.FC<StatCardProps> = ({
+export const StatCard: React.FC<StatCardProps> = React.memo(({
   title,
   value,
   unit,
   icon,
   color,
   children,
+  delay = 0,
 }) => {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? "light"];
 
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(20)).current;
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 400,
+          useNativeDriver: true,
+        }),
+        Animated.spring(slideAnim, {
+          toValue: 0,
+          friction: 8,
+          tension: 40,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, delay);
+
+    return () => clearTimeout(timer);
+  }, [fadeAnim, slideAnim, delay]);
+
   return (
-    <View
+    <Animated.View
       style={[
         styles.card,
-        { backgroundColor: colors.card, borderColor: colors.border },
+        {
+          backgroundColor: colors.card,
+          borderColor: colors.border,
+          opacity: fadeAnim,
+          transform: [{ translateY: slideAnim }],
+        },
       ]}
     >
       <View style={styles.cardHeader}>
-        <IconSymbol name={icon as any} size={20} color={color} />
+        <IconSymbol name={icon as "link"} size={20} color={color} />
         <Text style={[styles.cardTitle, { color: colors.text }]}>{title}</Text>
       </View>
       {children ? (
@@ -49,9 +79,9 @@ export const StatCard: React.FC<StatCardProps> = ({
           </Text>
         </View>
       )}
-    </View>
+    </Animated.View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   card: {

@@ -1,14 +1,17 @@
 import ESP8266Connection from "@/components/ESP8266Connection";
 import { AlertItem } from "@/components/ui/AlertItem";
+import { AnimatedPercentage } from "@/components/ui/AnimatedValue";
 import { CircularProgress } from "@/components/ui/CircularProgress";
 import { IconSymbol } from "@/components/ui/IconSymbol";
+import { ConnectionBadge } from "@/components/ui/InlineError";
+import { SkeletonCard, SkeletonStatRow } from "@/components/ui/Skeleton";
 import { StatCard } from "@/components/ui/StatCard";
 import { Colors } from "@/constants/Colors";
 import useAlerts from "@/hooks/useAlerts";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useESP8266 } from "@/hooks/useESP8266Context";
 import { StatusBar } from "expo-status-bar";
-import React, { useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   Image,
   RefreshControl,
@@ -24,38 +27,31 @@ export default function DashboardScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme as keyof typeof Colors];
 
-  // ESP8266 context for real sensor data
   const {
     deviceData,
     isConnected,
+    isConnecting,
     requestSensorData,
-    isProxyConnection,
     esp8266Status,
+    connectionQuality,
+    latency,
   } = useESP8266();
 
-  // Dynamic alerts system
   const { alerts, alertCount, hasHighSeverityAlerts, hasMediumSeverityAlerts } =
     useAlerts();
 
-  // Local state for UI controls
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     if (isRefreshing || !isConnected) return;
-
     setIsRefreshing(true);
     const success = requestSensorData();
-
-    // Wait for a minimum time to show the refresh animation
-    // and a bit longer if the request failed to show the state
     const minRefreshTime = success ? 800 : 1500;
-
     setTimeout(() => {
       setIsRefreshing(false);
     }, minRefreshTime);
-  };
+  }, [isRefreshing, isConnected, requestSensorData]);
 
-  // Sensor validation functions
   const isValidTemperature = (temp?: number): boolean => {
     return temp !== undefined && temp >= -40 && temp <= 85;
   };
@@ -68,33 +64,50 @@ export default function DashboardScreen() {
     return level !== undefined && level >= 0 && level <= 100;
   };
 
-  // Get real sensor values with validation
-  const temperature =
-    isConnected && isValidTemperature(deviceData.temperature)
-      ? deviceData.temperature
-      : null;
-  const foodLevel =
-    isConnected && isValidFoodLevel(deviceData.foodLevelPercentage)
-      ? deviceData.foodLevelPercentage
-      : null;
-  const distance =
-    isConnected && isValidDistance(deviceData.distance)
-      ? deviceData.distance
-      : null;
-  const isTemperatureSensorConnected =
-    isConnected && (deviceData.temperatureSensorConnected ?? false);
-  const isUltrasonicSensorConnected =
-    isConnected && (deviceData.ultrasonicSensorConnected ?? false);
+  const sensorValues = useMemo(
+    () => ({
+      temperature:
+        isConnected && isValidTemperature(deviceData.temperature)
+          ? deviceData.temperature
+          : null,
+      foodLevel:
+        isConnected && isValidFoodLevel(deviceData.foodLevelPercentage)
+          ? deviceData.foodLevelPercentage
+          : null,
+      distance:
+        isConnected && isValidDistance(deviceData.distance)
+          ? deviceData.distance
+          : null,
+      isTemperatureSensorConnected:
+        isConnected && (deviceData.temperatureSensorConnected ?? false),
+      isUltrasonicSensorConnected:
+        isConnected && (deviceData.ultrasonicSensorConnected ?? false),
+    }),
+    [
+      isConnected,
+      deviceData.temperature,
+      deviceData.foodLevelPercentage,
+      deviceData.distance,
+      deviceData.temperatureSensorConnected,
+      deviceData.ultrasonicSensorConnected,
+    ]
+  );
 
-  // Determine alert section color based on severity
-  const getAlertSectionColor = () => {
+  const {
+    temperature,
+    foodLevel,
+    distance,
+    isTemperatureSensorConnected,
+    isUltrasonicSensorConnected,
+  } = sensorValues;
+
+  const alertSectionColor = useMemo(() => {
     if (hasHighSeverityAlerts) return colors.error;
     if (hasMediumSeverityAlerts) return colors.warning;
     return colors.success;
-  };
+  }, [hasHighSeverityAlerts, hasMediumSeverityAlerts, colors]);
 
-  // Determine overall connection status for display
-  const getConnectionStatus = () => {
+  const connectionStatus = useMemo(() => {
     if (!isConnected) {
       return {
         status: "Disconnected",
@@ -102,38 +115,25 @@ export default function DashboardScreen() {
         icon: "xmark.circle.fill",
       };
     }
-
-    if (isProxyConnection) {
-      // For proxy connections, show ESP8266 status
-      if (esp8266Status === "connected") {
-        return {
-          status: "Connected via Proxy",
-          color: colors.success,
-          icon: "checkmark.circle.fill",
-        };
-      } else if (esp8266Status === "disconnected") {
-        return {
-          status: "Proxy OK, ESP8266 Offline",
-          color: colors.warning,
-          icon: "exclamationmark.triangle.fill",
-        };
-      } else {
-        return {
-          status: "Proxy Connected",
-          color: colors.warning,
-          icon: "questionmark.circle.fill",
-        };
-      }
-    } else {
+    if (esp8266Status === "connected") {
       return {
-        status: "Connected",
+        status: "Connected to Cloud",
         color: colors.success,
         icon: "checkmark.circle.fill",
       };
+    } else if (esp8266Status === "disconnected") {
+      return {
+        status: "Cloud OK, ESP8266 Offline",
+        color: colors.warning,
+        icon: "exclamationmark.triangle.fill",
+      };
     }
-  };
-
-  const connectionStatus = getConnectionStatus();
+    return {
+      status: "Cloud Connected",
+      color: colors.success,
+      icon: "checkmark.circle.fill",
+    };
+  }, [isConnected, esp8266Status, colors]);
 
   return (
     <SafeAreaView
@@ -141,7 +141,6 @@ export default function DashboardScreen() {
     >
       <StatusBar style="dark" backgroundColor={colors.background} />
 
-      {/* Header */}
       <View style={[styles.header, { backgroundColor: colors.background }]}>
         <View style={styles.headerContent}>
           <View style={styles.deviceInfo}>
@@ -152,35 +151,38 @@ export default function DashboardScreen() {
                 resizeMode="contain"
               />
               <View style={styles.statusRow}>
-                <IconSymbol
-                  name={connectionStatus.icon as any}
-                  size={16}
-                  color={connectionStatus.color}
+                <ConnectionBadge
+                  status={
+                    isConnecting
+                      ? "connecting"
+                      : isConnected
+                      ? "connected"
+                      : "disconnected"
+                  }
+                  label={connectionStatus.status}
                 />
-                <View style={styles.statusTextContainer}>
-                  <Text
-                    style={[
-                      styles.statusText,
-                      { color: connectionStatus.color },
-                    ]}
-                  >
-                    {connectionStatus.status}
-                  </Text>
-                  {isProxyConnection && esp8266Status === "disconnected" && (
-                    <Text
-                      style={[styles.statusSubText, { color: colors.muted }]}
-                    >
-                      Hardware not responding
-                    </Text>
-                  )}
-                </View>
               </View>
+              {isConnected && latency !== null && (
+                <View style={styles.latencyRow}>
+                  <Text style={[styles.latencyText, { color: colors.muted }]}>
+                    {latency}ms · {connectionQuality}
+                  </Text>
+                </View>
+              )}
             </View>
           </View>
           <TouchableOpacity
-            style={[styles.refreshButton, { backgroundColor: colors.primary }]}
+            style={[
+              styles.refreshButton,
+              {
+                backgroundColor: isConnected ? colors.primary : colors.muted,
+                opacity: isRefreshing ? 0.7 : 1,
+              },
+            ]}
             onPress={handleRefresh}
-            disabled={!isConnected}
+            disabled={!isConnected || isRefreshing}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh sensor data"
           >
             <IconSymbol name="arrow.clockwise" size={18} color="white" />
           </TouchableOpacity>
@@ -200,14 +202,20 @@ export default function DashboardScreen() {
           />
         }
       >
-        {/* ESP8266 Connection Management */}
         <ESP8266Connection />
 
-        {/* Proxy Server Status (if using proxy) */}
-        {isProxyConnection && (
+        {isConnecting && !isConnected && (
+          <>
+            <SkeletonCard showCircle />
+            <SkeletonStatRow count={2} />
+            <SkeletonCard lines={4} />
+          </>
+        )}
+
+        {isConnected && (
           <StatCard
-            title="Proxy Server Status"
-            icon="server.rack"
+            title="Cloud Server Status"
+            icon="globe"
             color={colors.secondary}
           >
             <View style={styles.proxyStatusContainer}>
@@ -218,7 +226,7 @@ export default function DashboardScreen() {
                   color={colors.success}
                 />
                 <Text style={[styles.statusText, { color: colors.text }]}>
-                  Express Proxy: Connected
+                  Cloud Server: Connected
                 </Text>
               </View>
               <View style={styles.statusRow}>
@@ -252,7 +260,7 @@ export default function DashboardScreen() {
                   ]}
                 >
                   <Text style={[styles.helpText, { color: colors.text }]}>
-                    💡 The proxy server is working, but the ESP8266 hardware is
+                    💡 The cloud server is working, but the ESP8266 hardware is
                     not responding. Check device power and WiFi connection.
                   </Text>
                 </View>
@@ -261,7 +269,6 @@ export default function DashboardScreen() {
           </StatCard>
         )}
 
-        {/* Feeder Capacity - Now using real ultrasonic sensor data */}
         <StatCard
           title="Feeder Capacity"
           icon="archivebox.fill"
@@ -276,11 +283,11 @@ export default function DashboardScreen() {
               <Text style={[styles.capacityLabel, { color: colors.muted }]}>
                 Food Remaining
               </Text>
-              <Text style={[styles.capacityValue, { color: colors.text }]}>
-                {foodLevel !== null && foodLevel !== undefined
-                  ? `${foodLevel.toFixed(1)}%`
-                  : "--"}
-              </Text>
+              <AnimatedPercentage
+                value={foodLevel}
+                color={colors.text}
+                size="large"
+              />
               <View style={styles.sensorInfo}>
                 <View style={styles.alertRow}>
                   <IconSymbol
@@ -318,7 +325,6 @@ export default function DashboardScreen() {
           </View>
         </StatCard>
 
-        {/* Stats Row */}
         <View style={styles.statsRow}>
           <StatCard
             title="Water Temp"
@@ -357,11 +363,10 @@ export default function DashboardScreen() {
           </StatCard>
         </View>
 
-        {/* Dynamic Alerts */}
         <StatCard
           title={`Alerts ${alertCount > 0 ? `(${alertCount})` : ""}`}
           icon="bell"
-          color={getAlertSectionColor()}
+          color={alertSectionColor}
         >
           <View style={styles.alertsContainer}>
             {alerts.length > 0 ? (
@@ -393,7 +398,6 @@ export default function DashboardScreen() {
           </View>
         </StatCard>
 
-        {/* Bottom spacing for tab bar */}
         <View style={styles.bottomSpacing} />
       </ScrollView>
     </SafeAreaView>
@@ -420,13 +424,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 12,
   },
-  deviceIconContainer: {
-    width: 48,
-    height: 48,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   logoImage: {
     width: 80,
     height: 32,
@@ -436,11 +433,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 6,
     marginTop: 2,
-  },
-  statusDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
   },
   statusText: {
     fontSize: 14,
@@ -473,11 +465,6 @@ const styles = StyleSheet.create({
     fontWeight: "500",
     marginBottom: 4,
   },
-  capacityValue: {
-    fontSize: 24,
-    fontWeight: "700",
-    marginBottom: 12,
-  },
   sensorInfo: {
     gap: 6,
   },
@@ -485,10 +472,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-  },
-  alertText: {
-    fontSize: 12,
-    fontWeight: "500",
   },
   sensorText: {
     fontSize: 12,
@@ -536,11 +519,11 @@ const styles = StyleSheet.create({
   proxyStatusContainer: {
     gap: 12,
   },
-  statusTextContainer: {
-    flexDirection: "column",
+  latencyRow: {
+    marginTop: 4,
   },
-  statusSubText: {
-    fontSize: 12,
+  latencyText: {
+    fontSize: 11,
   },
   helpBox: {
     padding: 12,
