@@ -126,7 +126,7 @@ export default function DashboardScreen() {
       }
     } else {
       return {
-        status: "Connected Direct",
+        status: "Connected",
         color: colors.success,
         icon: "checkmark.circle.fill",
       };

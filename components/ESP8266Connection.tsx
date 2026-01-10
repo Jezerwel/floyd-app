@@ -229,7 +229,7 @@ const ESP8266Connection: React.FC = () => {
                       borderColor: colors.border,
                     },
                   ]}
-                  onPress={() => setInputUrl("172.17.170.57:3001")}
+                  onPress={() => setInputUrl("172.31.2.174:3001")}
                 >
                   <IconSymbol name="power" size={14} color={colors.secondary} />
                   <Text
@@ -243,7 +243,7 @@ const ESP8266Connection: React.FC = () => {
                       { color: colors.muted },
                     ]}
                   >
-                    172.17.170.57:3001
+                    172.31.2.174
                   </Text>
                 </TouchableOpacity>
 
@@ -255,7 +255,7 @@ const ESP8266Connection: React.FC = () => {
                       borderColor: colors.border,
                     },
                   ]}
-                  onPress={() => setInputUrl("172.17.170.11:81")}
+                  onPress={() => setInputUrl("172.31.5.50:81")}
                 >
                   <IconSymbol name="wifi" size={14} color={colors.warning} />
                   <Text
@@ -269,7 +269,7 @@ const ESP8266Connection: React.FC = () => {
                       { color: colors.muted },
                     ]}
                   >
-                    172.17.170.11:81
+                    172.31.5.50:81
                   </Text>
                 </TouchableOpacity>
               </View>

@@ -1,10 +1,12 @@
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { StatCard } from "@/components/ui/StatCard";
+import { TimerControl } from "@/components/ui/TimerControl";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useESP8266 } from "@/hooks/useESP8266Context";
+import { DEFAULT_TIMER_STATE, TimerState } from "@/types/timer";
 import { StatusBar } from "expo-status-bar";
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   Alert,
   ScrollView,
@@ -30,6 +32,54 @@ export default function ControlsScreen() {
   const [leftPaddleOn, setLeftPaddleOn] = useState(false);
   const [rightPaddleOn, setRightPaddleOn] = useState(false);
 
+  // Timer states
+  const [timerState, setTimerState] = useState<TimerState>(DEFAULT_TIMER_STATE);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, []);
+
+  // Timer countdown effect
+  useEffect(() => {
+    if (timerState.isActive && timerState.remainingTime > 0) {
+      timerRef.current = setInterval(() => {
+        setTimerState((prev) => {
+          const newRemainingTime = prev.remainingTime - 1;
+
+          if (newRemainingTime <= 0) {
+            // Timer completed - stop feeding
+            handleStopTimedFeeding();
+            return {
+              ...prev,
+              isActive: false,
+              remainingTime: 0,
+            };
+          }
+
+          return {
+            ...prev,
+            remainingTime: newRemainingTime,
+          };
+        });
+      }, 1000);
+    } else if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+      }
+    };
+  }, [timerState.isActive, timerState.remainingTime]);
+
   const handleLeftPaddleToggle = () => {
     setLeftPaddleOn(!leftPaddleOn);
     // TODO: Send paddle control command to ESP8266
@@ -54,6 +104,15 @@ export default function ControlsScreen() {
       Alert.alert(
         "ESP8266 Not Available",
         "The proxy server is connected, but the ESP8266 hardware is not responding. Please check the device power and WiFi connection."
+      );
+      return;
+    }
+
+    // Don't allow manual control while timer is active
+    if (timerState.isActive) {
+      Alert.alert(
+        "Timer Active",
+        "A timer is currently running. Please stop the timer first to use manual controls."
       );
       return;
     }
@@ -89,6 +148,80 @@ export default function ControlsScreen() {
     );
   };
 
+  const handleStartTimedFeeding = (totalSeconds: number) => {
+    if (!isConnected) {
+      Alert.alert(
+        "Error",
+        "Not connected to feeder device. Please check your connection."
+      );
+      return;
+    }
+
+    if (isProxyConnection && esp8266Status !== "connected") {
+      Alert.alert(
+        "ESP8266 Not Available",
+        "The proxy server is connected, but the ESP8266 hardware is not responding. Please check the device power and WiFi connection."
+      );
+      return;
+    }
+
+    // Don't allow timer if relay is already active
+    if (deviceData.relayState === true) {
+      Alert.alert(
+        "Dispenser Already Active",
+        "The food dispenser is already running. Please stop it first before starting a timer."
+      );
+      return;
+    }
+
+    // Start the relay
+    const success = toggleRelay();
+    if (success) {
+      setTimerState({
+        isActive: true,
+        remainingTime: totalSeconds,
+        totalTime: totalSeconds,
+        startTime: Date.now(),
+      });
+
+      Alert.alert(
+        "Timer Started",
+        `Food dispenser started with ${Math.floor(totalSeconds / 60)}:${(
+          totalSeconds % 60
+        )
+          .toString()
+          .padStart(2, "0")} timer`
+      );
+    } else {
+      Alert.alert("Error", "Failed to start dispenser. Please try again.");
+    }
+  };
+
+  const handleStopTimedFeeding = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+
+    // Stop the relay if it's active
+    if (deviceData.relayState === true) {
+      const success = toggleRelay();
+      if (success) {
+        Alert.alert(
+          "Timer Stopped",
+          "Food dispenser stopped and timer cancelled."
+        );
+      } else {
+        Alert.alert(
+          "Warning",
+          "Timer cancelled but failed to stop dispenser. Please check manually."
+        );
+      }
+    }
+
+    setTimerState(DEFAULT_TIMER_STATE);
+  };
+
   // Determine if controls should be enabled
   const controlsEnabled =
     isConnected && (!isProxyConnection || esp8266Status === "connected");
@@ -107,7 +240,7 @@ export default function ControlsScreen() {
           color={colors.primary}
         />
         <Text style={[styles.headerTitle, { color: colors.text }]}>
-          Paddle Controls
+          Feeder Controls
         </Text>
       </View>
 
@@ -208,8 +341,28 @@ export default function ControlsScreen() {
           )}
         </StatCard>
 
+        {/* Timed Feeding Controls */}
+        <StatCard title="Timed Feeding" icon="clock" color={colors.secondary}>
+          <TimerControl
+            onStartTimer={handleStartTimedFeeding}
+            onStopTimer={handleStopTimedFeeding}
+            isTimerActive={timerState.isActive}
+            remainingTime={timerState.remainingTime}
+            totalTime={timerState.totalTime}
+            disabled={!controlsEnabled}
+            colors={colors}
+          />
+
+          {!controlsEnabled && (
+            <Text style={[styles.disabledText, { color: colors.muted }]}>
+              Timer disabled -{" "}
+              {!isConnected ? "not connected" : "ESP8266 hardware offline"}
+            </Text>
+          )}
+        </StatCard>
+
         {/* Manual Feed */}
-        <StatCard title="Feed Dispenser" icon="power" color={colors.secondary}>
+        <StatCard title="Manual Feed" icon="power" color={colors.success}>
           <View style={styles.manualFeedContent}>
             {/* Dispenser Status */}
             {isConnected && (
@@ -243,21 +396,37 @@ export default function ControlsScreen() {
               </View>
             )}
 
+            {/* Timer Status Warning */}
+            {timerState.isActive && (
+              <View
+                style={[
+                  styles.helpContainer,
+                  { backgroundColor: colors.warning + "20" },
+                ]}
+              >
+                <Text style={[styles.helpText, { color: colors.text }]}>
+                  ⏱️ Timer is active. Manual controls are disabled until timer
+                  completes or is stopped.
+                </Text>
+              </View>
+            )}
+
             {/* Feed Button */}
             <TouchableOpacity
               style={[
                 styles.feedButton,
                 {
-                  backgroundColor: controlsEnabled
-                    ? deviceData.relayState
-                      ? colors.error
-                      : colors.success
-                    : colors.muted,
-                  opacity: controlsEnabled ? 1 : 0.5,
+                  backgroundColor:
+                    controlsEnabled && !timerState.isActive
+                      ? deviceData.relayState
+                        ? colors.error
+                        : colors.success
+                      : colors.muted,
+                  opacity: controlsEnabled && !timerState.isActive ? 1 : 0.5,
                 },
               ]}
               onPress={handleToggleDispenser}
-              disabled={!controlsEnabled}
+              disabled={!controlsEnabled || timerState.isActive}
             >
               <IconSymbol
                 name={deviceData.relayState ? "xmark" : "power"}
@@ -269,7 +438,7 @@ export default function ControlsScreen() {
               </Text>
             </TouchableOpacity>
 
-            {!controlsEnabled && (
+            {!controlsEnabled && !timerState.isActive && (
               <View
                 style={[
                   styles.helpContainer,

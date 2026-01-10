@@ -180,7 +180,7 @@ export const DEFAULT_FEEDER_CONFIG: FeederConfig = {
 };
 
 export const DEFAULT_ESP8266_CONFIG: ESP8266Config = {
-  host: "172.17.170.11",
+  host: "172.31.5.134",
   port: 81,
   reconnectDelay: 3000,
   maxReconnectAttempts: 5,
