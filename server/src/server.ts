@@ -1,7 +1,7 @@
 /**
  * Floyd Fish Feeder Express Proxy Server
  * TypeScript Express server with WebSocket proxy support
- * Bridges React Native app and ESP8266 hardware
+ * Bridges React Native app and ESP8266 hardware via MQTT or direct connection
  */
 
 import cors from "cors";
@@ -9,25 +9,45 @@ import express from "express";
 import { createServer } from "http";
 import WebSocket from "ws";
 import { ESP8266Client } from "./services/esp8266Client";
-import { DEFAULT_SERVER_CONFIG, ServerConfig } from "./types";
+import { MQTTBridge } from "./services/mqttBridge";
+import { DEFAULT_SERVER_CONFIG, ServerConfig, DeviceCommand, isValidCommand } from "./types";
 import { WebSocketProxyHandler } from "./websocket/proxyHandlers";
+import { v4 as uuidv4 } from "uuid";
+
+interface MQTTClientInfo {
+  id: string;
+  socket: WebSocket;
+  deviceId: string;
+  connectedAt: number;
+}
 
 class FloydFeederProxyServer {
   private app: express.Application;
-  private server: any;
+  private server: ReturnType<typeof createServer>;
   private wss?: WebSocket.Server;
   private config: ServerConfig;
 
   // Services
   private esp8266Client: ESP8266Client;
   private wsProxyHandler: WebSocketProxyHandler;
+  private mqttBridge?: MQTTBridge;
+
+  // MQTT mode clients
+  private mqttClients: Map<string, MQTTClientInfo> = new Map();
+  private lastMQTTData: Map<string, Record<string, unknown>> = new Map();
 
   constructor(config: Partial<ServerConfig> = {}) {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
 
-    // Initialize ESP8266 client
+    // Initialize ESP8266 client (for direct connection mode)
     this.esp8266Client = new ESP8266Client(this.config.esp8266Config);
     this.wsProxyHandler = new WebSocketProxyHandler(this.esp8266Client);
+
+    // Initialize MQTT bridge if enabled
+    if (this.config.useMqtt && this.config.mqttConfig) {
+      this.mqttBridge = new MQTTBridge(this.config.mqttConfig);
+      this.setupMQTTListeners();
+    }
 
     // Setup Express application
     this.app = express();
@@ -37,7 +57,138 @@ class FloydFeederProxyServer {
     this.server = createServer(this.app);
 
     console.log("🚀 Floyd Feeder Proxy Server initialized");
-    console.log("⚙️  Configuration:", this.config);
+    console.log(`⚙️  Mode: ${this.config.useMqtt ? "MQTT" : "Direct ESP8266"}`);
+    console.log("⚙️  Configuration:", JSON.stringify(this.config, null, 2));
+  }
+
+  private setupMQTTListeners(): void {
+    if (!this.mqttBridge) return;
+
+    this.mqttBridge.on("message", (message) => {
+      this.lastMQTTData.set(message.deviceId, message.data);
+      this.broadcastMQTTMessage(message.deviceId, {
+        type: message.type === "sensors" ? "sensor_data" : message.type === "response" ? "control_response" : "status",
+        data: message.data,
+        timestamp: message.timestamp,
+      });
+    });
+
+    this.mqttBridge.on("connected", () => {
+      console.log("✅ MQTT Bridge connected");
+      this.broadcastMQTTStatus("MQTT connected");
+    });
+
+    this.mqttBridge.on("disconnected", () => {
+      console.log("📴 MQTT Bridge disconnected");
+      this.broadcastMQTTStatus("MQTT disconnected");
+    });
+
+    this.mqttBridge.on("error", (error: Error) => {
+      console.error("❌ MQTT Bridge error:", error.message);
+    });
+  }
+
+  private broadcastMQTTMessage(deviceId: string, message: Record<string, unknown>): void {
+    const messageStr = JSON.stringify(message);
+    this.mqttClients.forEach((client) => {
+      if (client.deviceId === deviceId && client.socket.readyState === WebSocket.OPEN) {
+        client.socket.send(messageStr);
+      }
+    });
+  }
+
+  private broadcastMQTTStatus(status: string): void {
+    const message = JSON.stringify({
+      type: "status",
+      data: { message: status, mqttConnected: this.mqttBridge?.getStatus().isConnected },
+      timestamp: Date.now(),
+    });
+    this.mqttClients.forEach((client) => {
+      if (client.socket.readyState === WebSocket.OPEN) {
+        client.socket.send(message);
+      }
+    });
+  }
+
+  private handleMQTTClientConnection(socket: WebSocket, request: Request & { socket: { remoteAddress: string } }): string {
+    const clientId = uuidv4();
+    const deviceId = "default";
+
+    const clientInfo: MQTTClientInfo = {
+      id: clientId,
+      socket,
+      deviceId,
+      connectedAt: Date.now(),
+    };
+
+    this.mqttClients.set(clientId, clientInfo);
+    console.log(`📱 MQTT mode client connected: ${clientId}`);
+
+    // Send last known data
+    const lastData = this.lastMQTTData.get(deviceId);
+    if (lastData) {
+      socket.send(JSON.stringify({ type: "sensor_data", data: lastData, timestamp: Date.now() }));
+    }
+
+    // Send MQTT status
+    socket.send(JSON.stringify({
+      type: "status",
+      data: {
+        mqttConnected: this.mqttBridge?.getStatus().isConnected,
+        esp8266Connected: true,
+        proxyServerConnected: true,
+      },
+      timestamp: Date.now(),
+    }));
+
+    socket.on("message", (data: WebSocket.Data) => {
+      this.handleMQTTClientMessage(clientId, data);
+    });
+
+    socket.on("close", () => {
+      this.mqttClients.delete(clientId);
+      console.log(`📱 MQTT mode client disconnected: ${clientId}`);
+    });
+
+    return clientId;
+  }
+
+  private handleMQTTClientMessage(clientId: string, data: WebSocket.Data): void {
+    const client = this.mqttClients.get(clientId);
+    if (!client || !this.mqttBridge) return;
+
+    try {
+      const command = JSON.parse(data.toString());
+
+      if (command.action === "ping") {
+        client.socket.send(JSON.stringify({
+          type: "status",
+          data: { pong: true },
+          timestamp: Date.now(),
+        }));
+        return;
+      }
+
+      if (command.action === "set_device") {
+        client.deviceId = command.parameters?.deviceId || "default";
+        console.log(`📱 Client ${clientId} set device to: ${client.deviceId}`);
+        return;
+      }
+
+      if (!isValidCommand(command)) {
+        client.socket.send(JSON.stringify({
+          type: "error",
+          data: { message: "Invalid command format" },
+          timestamp: Date.now(),
+        }));
+        return;
+      }
+
+      console.log(`📨 MQTT command from ${clientId}: ${command.action}`);
+      this.mqttBridge.sendCommand(client.deviceId, command as DeviceCommand);
+    } catch (error) {
+      console.error(`❌ Failed to parse message from MQTT client ${clientId}:`, error);
+    }
   }
 
   /**
@@ -62,20 +213,34 @@ class FloydFeederProxyServer {
     // Health check endpoint
     this.app.get("/health", (req, res) => {
       const esp8266Status = this.esp8266Client.getStatus();
+      const mqttStatus = this.mqttBridge?.getStatus();
+
       res.json({
         status: "healthy",
         timestamp: new Date().toISOString(),
+        mode: this.config.useMqtt ? "mqtt" : "direct",
         proxyServer: {
           uptime: Date.now() - this.startTime,
-          connectedClients: this.wsProxyHandler.getClientsInfo().length,
+          connectedClients: this.config.useMqtt
+            ? this.mqttClients.size
+            : this.wsProxyHandler.getClientsInfo().length,
         },
-        esp8266: {
-          connected: esp8266Status.isConnected,
-          connecting: esp8266Status.isConnecting,
-          reconnectAttempts: esp8266Status.reconnectAttempts,
-          host: esp8266Status.config.host,
-          port: esp8266Status.config.port,
-        },
+        mqtt: this.config.useMqtt
+          ? {
+              connected: mqttStatus?.isConnected,
+              subscribedDevices: mqttStatus?.subscribedDevices,
+              messageCount: mqttStatus?.messageCount,
+            }
+          : null,
+        esp8266: !this.config.useMqtt
+          ? {
+              connected: esp8266Status.isConnected,
+              connecting: esp8266Status.isConnecting,
+              reconnectAttempts: esp8266Status.reconnectAttempts,
+              host: esp8266Status.config.host,
+              port: esp8266Status.config.port,
+            }
+          : null,
       });
     });
 
@@ -242,8 +407,13 @@ class FloydFeederProxyServer {
 
     // Handle WebSocket connections from React Native apps
     this.wss.on("connection", (socket: WebSocket, request) => {
-      const clientId = this.wsProxyHandler.handleConnection(socket, request);
-      console.log(`✅ WebSocket proxy connection established: ${clientId}`);
+      if (this.config.useMqtt && this.mqttBridge) {
+        const clientId = this.handleMQTTClientConnection(socket, request as Request & { socket: { remoteAddress: string } });
+        console.log(`✅ MQTT mode WebSocket connection established: ${clientId}`);
+      } else {
+        const clientId = this.wsProxyHandler.handleConnection(socket, request);
+        console.log(`✅ Direct mode WebSocket connection established: ${clientId}`);
+      }
     });
 
     console.log(
@@ -280,13 +450,25 @@ class FloydFeederProxyServer {
           console.log(
             `📱 Connect your React Native app to: ws://localhost:${this.config.port}`
           );
-          console.log(
-            `🔌 ESP8266 target: ws://${this.config.esp8266Config.host}:${this.config.esp8266Config.port}`
-          );
+          if (this.config.useMqtt) {
+            console.log(
+              `🔌 MQTT Broker: ${this.config.mqttConfig?.brokerUrl}`
+            );
+          } else {
+            console.log(
+              `🔌 ESP8266 target: ws://${this.config.esp8266Config.host}:${this.config.esp8266Config.port}`
+            );
+          }
           console.log("🎯 ======================================");
 
-          // Start ESP8266 connection
-          this.esp8266Client.connect();
+          // Start appropriate connection
+          if (this.config.useMqtt && this.mqttBridge) {
+            this.mqttBridge.connect().catch((err) => {
+              console.error("❌ Failed to connect to MQTT broker:", err);
+            });
+          } else {
+            this.esp8266Client.connect();
+          }
 
           resolve();
         });
@@ -316,6 +498,20 @@ class FloydFeederProxyServer {
 
       // Stop WebSocket proxy
       this.wsProxyHandler.shutdown();
+
+      // Disconnect MQTT if enabled
+      if (this.mqttBridge) {
+        this.mqttBridge.disconnect();
+        console.log("📡 MQTT Bridge disconnected");
+      }
+
+      // Close MQTT mode clients
+      this.mqttClients.forEach((client) => {
+        if (client.socket.readyState === WebSocket.OPEN) {
+          client.socket.close(1001, "Server shutdown");
+        }
+      });
+      this.mqttClients.clear();
 
       // Close WebSocket server
       if (this.wss) {
