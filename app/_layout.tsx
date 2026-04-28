@@ -20,17 +20,21 @@ SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
   const colorScheme = useColorScheme();
-  const [loaded] = useFonts({
-    SpaceMono: require("../assets/fonts/SpaceMono-Regular.ttf"),
+  const [loaded, fontError] = useFonts({
+    SpaceMono_400Regular: require("../assets/fonts/SpaceMono-Regular.ttf"),
+    PlayfairDisplay_700Bold: require("../assets/fonts/PlayfairDisplay-Bold.ttf"),
+    DMSans_400Regular: require("../assets/fonts/DMSans-Regular.ttf"),
+    DMSans_500Medium: require("../assets/fonts/DMSans-Medium.ttf"),
+    DMSans_700Bold: require("../assets/fonts/DMSans-Bold.ttf"),
   });
 
   useEffect(() => {
-    if (loaded) {
+    if (loaded || fontError) {
       SplashScreen.hideAsync();
     }
-  }, [loaded]);
+  }, [loaded, fontError]);
 
-  if (!loaded) {
+  if (!loaded && !fontError) {
     return null;
   }
 
