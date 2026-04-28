@@ -1,110 +1,46 @@
-import { IconSymbol } from "@/components/ui/IconSymbol";
-import { StatCard } from "@/components/ui/StatCard";
-import { Colors } from "@/constants/Colors";
-import useAlerts from "@/hooks/useAlerts";
-import { useColorScheme } from "@/hooks/useColorScheme";
+import { useState, useCallback, useEffect } from "react";
+import { Surface } from "@/components/ui/Surface";
+import { LogTimeline } from "@/components/sections/LogTimeline";
 import { useESP8266 } from "@/hooks/useESP8266Context";
-import { StatusBar } from "expo-status-bar";
-import React, { useCallback, useEffect, useState } from "react";
-import {
-  FlatList,
-  ScrollView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
+import useAlerts from "@/hooks/useAlerts";
+import { useFeedHistory } from "@/hooks/useFeedHistory";
+import { useFocusEffect } from "expo-router";
 
-interface SensorLogEntry {
-  id: string;
-  timestamp: Date;
-  temperature?: number;
-  distance?: number;
-  foodLevel?: number;
-  temperatureSensorConnected: boolean;
-  ultrasonicSensorConnected: boolean;
-}
-
-interface FeedLogEntry {
-  id: string;
+interface SensorLog {
   timestamp: string;
-  augerSpeed: number;
-  impellerSpeed: number;
-  feedMs: number;
-  success: boolean;
-  errorMessage?: string;
-}
-
-const CLOUD_SERVER = "https://floyd-feeder.up.railway.app";
-
-interface SensorLogEntry {
-  id: string;
-  timestamp: Date;
   temperature?: number;
   distance?: number;
   foodLevel?: number;
-  temperatureSensorConnected: boolean;
-  ultrasonicSensorConnected: boolean;
 }
 
-export default function LogsScreen() {
-  const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? "light"];
+export default function HistoryScreen() {
+  const [sensorLogs, setSensorLogs] = useState<SensorLog[]>([]);
   const { deviceData, isConnected } = useESP8266();
   const { alerts } = useAlerts();
+  const { entries: feedLogs, fetchHistory } = useFeedHistory();
 
-  const [sensorLogs, setSensorLogs] = useState<SensorLogEntry[]>([]);
-  const [showTemperatureLogs, setShowTemperatureLogs] = useState(true);
-  const [showAlertLogs, setShowAlertLogs] = useState(true);
-  const [showFeedHistory, setShowFeedHistory] = useState(false);
-  const [feedLogs, setFeedLogs] = useState<FeedLogEntry[]>([]);
+  useFocusEffect(
+    useCallback(() => {
+      fetchHistory();
+    }, [fetchHistory])
+  );
 
-  // Fetch feed history from server
-  const fetchFeedHistory = useCallback(async () => {
-    try {
-      const res = await fetch(`${CLOUD_SERVER}/api/history?limit=50`);
-      const data = await res.json();
-      if (data.success && data.logs) {
-        setFeedLogs(data.logs);
-      }
-    } catch (err) {
-      console.error("Failed to fetch feed history:", err);
-    }
-  }, []);
-
-  const handleFeedHistoryToggle = () => {
-    const next = !showFeedHistory;
-    setShowFeedHistory(next);
-    if (next && feedLogs.length === 0) {
-      fetchFeedHistory();
-    }
-  };
-
-  // Log sensor data when it updates (optimized to prevent excessive re-renders)
   useEffect(() => {
     if (isConnected && deviceData.lastUpdate) {
       setSensorLogs((prev) => {
-        // Check if this is actually new data to prevent duplicates
         const lastEntry = prev[0];
-        if (lastEntry?.timestamp.getTime() === deviceData.lastUpdate) {
-          return prev; // Same timestamp, no change needed
+        if (lastEntry?.timestamp === String(deviceData.lastUpdate)) {
+          return prev;
         }
 
-        const newLogEntry: SensorLogEntry = {
-          id: Date.now().toString(),
-          timestamp: new Date(deviceData.lastUpdate!), // Safe because we check lastUpdate exists above
+        const newEntry: SensorLog = {
+          timestamp: new Date(deviceData.lastUpdate!).toISOString(),
           temperature: deviceData.temperature,
           distance: deviceData.distance,
           foodLevel: deviceData.foodLevelPercentage,
-          temperatureSensorConnected:
-            deviceData.temperatureSensorConnected ?? false,
-          ultrasonicSensorConnected:
-            deviceData.ultrasonicSensorConnected ?? false,
         };
 
-        // Keep only last 50 entries to prevent memory issues
-        return [newLogEntry, ...prev].slice(0, 50);
+        return [newEntry, ...prev].slice(0, 50);
       });
     }
   }, [
@@ -113,472 +49,20 @@ export default function LogsScreen() {
     deviceData.temperature,
     deviceData.distance,
     deviceData.foodLevelPercentage,
-    deviceData.temperatureSensorConnected,
-    deviceData.ultrasonicSensorConnected,
   ]);
 
-  const clearLogs = () => {
+  const handleClear = useCallback(() => {
     setSensorLogs([]);
-  };
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleTimeString();
-  };
-
-  const formatDate = (date: Date) => {
-    return date.toLocaleDateString();
-  };
-
-  const renderSensorLogItem = ({ item }: { item: SensorLogEntry }) => (
-    <View
-      style={[
-        styles.logItem,
-        { backgroundColor: colors.card, borderColor: colors.border },
-      ]}
-    >
-      <View style={styles.logHeader}>
-        <Text style={[styles.logTime, { color: colors.text }]}>
-          {formatTime(item.timestamp)}
-        </Text>
-        <Text style={[styles.logDate, { color: colors.muted }]}>
-          {formatDate(item.timestamp)}
-        </Text>
-      </View>
-      <View style={styles.logContent}>
-        {item.temperature !== undefined && item.temperature !== null && (
-          <Text style={[styles.logValue, { color: colors.text }]}>
-            🌡️ {item.temperature.toFixed(1)}°C
-          </Text>
-        )}
-        {item.distance !== undefined && item.distance !== null && (
-          <Text style={[styles.logValue, { color: colors.text }]}>
-            📏 {item.distance.toFixed(1)}cm
-          </Text>
-        )}
-        {item.foodLevel !== undefined && item.foodLevel !== null && (
-          <Text style={[styles.logValue, { color: colors.text }]}>
-            🥘 {item.foodLevel.toFixed(1)}%
-          </Text>
-        )}
-      </View>
-      <View style={styles.sensorStatus}>
-        <View
-          style={[
-            styles.statusDot,
-            {
-              backgroundColor: item.temperatureSensorConnected
-                ? colors.success
-                : colors.error,
-            },
-          ]}
-        />
-        <Text style={[styles.statusText, { color: colors.muted }]}>Temp</Text>
-        <View
-          style={[
-            styles.statusDot,
-            {
-              backgroundColor: item.ultrasonicSensorConnected
-                ? colors.success
-                : colors.error,
-            },
-          ]}
-        />
-        <Text style={[styles.statusText, { color: colors.muted }]}>
-          Distance
-        </Text>
-      </View>
-    </View>
-  );
-
-  const renderAlertItem = ({ item }: { item: any }) => (
-    <View
-      style={[
-        styles.alertLogItem,
-        {
-          backgroundColor: colors.card,
-          borderColor: colors.border,
-          borderLeftColor:
-            item.severity === "HIGH"
-              ? colors.error
-              : item.severity === "MEDIUM"
-              ? colors.warning
-              : colors.success,
-          borderLeftWidth: 4,
-        },
-      ]}
-    >
-      <View style={styles.alertHeader}>
-        <Text style={[styles.alertType, { color: colors.text }]}>
-          {item.type}
-        </Text>
-        <Text style={[styles.alertTime, { color: colors.muted }]}>
-          {item.timestamp}
-        </Text>
-      </View>
-      <Text style={[styles.alertMessage, { color: colors.muted }]}>
-        {item.message}
-      </Text>
-    </View>
-  );
+  }, []);
 
   return (
-    <SafeAreaView
-      style={[styles.container, { backgroundColor: colors.background }]}
-    >
-      <StatusBar style={colorScheme === "dark" ? "light" : "dark"} />
-
-      {/* Header */}
-      <View style={styles.header}>
-        <IconSymbol name="house.fill" size={24} color={colors.primary} />
-        <Text style={[styles.headerTitle, { color: colors.text }]}>
-          Sensor Logs
-        </Text>
-        <TouchableOpacity onPress={clearLogs} style={styles.clearButton}>
-          <IconSymbol name="trash" size={18} color={colors.error} />
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-      >
-        {/* Connection Status */}
-        <StatCard
-          title="Logging Status"
-          icon="antenna.radiowaves.left.and.right"
-          color={isConnected ? colors.success : colors.error}
-        >
-          <View style={styles.statusContainer}>
-            <Text style={[styles.statusText, { color: colors.text }]}>
-              {isConnected
-                ? "✅ Actively logging sensor data"
-                : "❌ Not connected - logging paused"}
-            </Text>
-            <Text style={[styles.logCount, { color: colors.muted }]}>
-              {sensorLogs.length} sensor readings logged
-            </Text>
-          </View>
-        </StatCard>
-
-        {/* Log Controls */}
-        <View style={styles.logControls}>
-          <TouchableOpacity
-            style={[
-              styles.logToggle,
-              {
-                backgroundColor: showTemperatureLogs
-                  ? colors.primary
-                  : colors.border,
-              },
-            ]}
-            onPress={() => setShowTemperatureLogs(!showTemperatureLogs)}
-          >
-            <Text
-              style={[
-                styles.toggleText,
-                {
-                  color: showTemperatureLogs ? "white" : colors.text,
-                },
-              ]}
-            >
-              Sensor Data
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.logToggle,
-              {
-                backgroundColor: showAlertLogs
-                  ? colors.secondary
-                  : colors.border,
-              },
-            ]}
-            onPress={() => setShowAlertLogs(!showAlertLogs)}
-          >
-            <Text
-              style={[
-                styles.toggleText,
-                { color: showAlertLogs ? "white" : colors.text },
-              ]}
-            >
-              Alerts History
-            </Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[
-              styles.logToggle,
-              {
-                backgroundColor: showFeedHistory ? colors.accent : colors.border,
-              },
-            ]}
-            onPress={handleFeedHistoryToggle}
-          >
-            <Text
-              style={[
-                styles.toggleText,
-                { color: showFeedHistory ? "white" : colors.text },
-              ]}
-            >
-              Feed History
-            </Text>
-          </TouchableOpacity>
-        </View>
-
-        {/* Sensor Data Logs */}
-        {showTemperatureLogs && (
-          <StatCard
-            title={`Sensor Data (${sensorLogs.length})`}
-            icon="waveform"
-            color={colors.primary}
-          >
-            {sensorLogs.length > 0 ? (
-              <FlatList
-                data={sensorLogs}
-                renderItem={renderSensorLogItem}
-                keyExtractor={(item) => item.id}
-                style={styles.logList}
-                scrollEnabled={false}
-              />
-            ) : (
-              <View style={styles.emptyState}>
-                <IconSymbol name="circle" size={32} color={colors.muted} />
-                <Text style={[styles.emptyText, { color: colors.muted }]}>
-                  No sensor data logged yet
-                </Text>
-                <Text style={[styles.emptySubtext, { color: colors.muted }]}>
-                  Connect to your device to start logging
-                </Text>
-              </View>
-            )}
-          </StatCard>
-        )}
-
-        {/* Alert History */}
-        {showAlertLogs && (
-          <StatCard
-            title={`Alert History (${alerts.length})`}
-            icon="bell.badge"
-            color={colors.secondary}
-          >
-            {alerts.length > 0 ? (
-              <FlatList
-                data={alerts}
-                renderItem={renderAlertItem}
-                keyExtractor={(item) => item.id}
-                style={styles.logList}
-                scrollEnabled={false}
-              />
-            ) : (
-              <View style={styles.emptyState}>
-                <IconSymbol
-                  name="checkmark.circle.fill"
-                  size={32}
-                  color={colors.success}
-                />
-                <Text style={[styles.emptyText, { color: colors.success }]}>
-                  No alerts recorded
-                </Text>
-                <Text style={[styles.emptySubtext, { color: colors.muted }]}>
-                  All systems operating normally
-                </Text>
-              </View>
-            )}
-          </StatCard>
-        )}
-
-        {/* Feed History */}
-        {showFeedHistory && (
-          <StatCard
-            title={`Feed History (${feedLogs.length})`}
-            icon="clock.fill"
-            color={colors.accent}
-          >
-            {feedLogs.length > 0 ? (
-              feedLogs.map((log) => (
-                <View
-                  key={log.id}
-                  style={[styles.logItem, { backgroundColor: colors.card, borderColor: colors.border }]}
-                >
-                  <View style={styles.logHeader}>
-                    <Text style={[styles.logTime, { color: colors.text }]}>
-                      {new Date(log.timestamp).toLocaleString()}
-                    </Text>
-                    <Text style={[styles.logTime, { color: log.success ? colors.success : colors.error }]}>
-                      {log.success ? "OK" : "FAIL"}
-                    </Text>
-                  </View>
-                  <View style={styles.logContent}>
-                    <Text style={[styles.logValue, { color: colors.text }]}>
-                      {Math.round(log.feedMs / 1000)}s
-                    </Text>
-                    <Text style={[styles.logValue, { color: colors.muted }]}>
-                      Auger: {Math.round(log.augerSpeed / 10.23)}%
-                    </Text>
-                    <Text style={[styles.logValue, { color: colors.muted }]}>
-                      Impeller: {Math.round(log.impellerSpeed / 10.23)}%
-                    </Text>
-                  </View>
-                  {log.errorMessage && (
-                    <Text style={[styles.logValue, { color: colors.error }]}>
-                      {log.errorMessage}
-                    </Text>
-                  )}
-                </View>
-              ))
-            ) : (
-              <View style={styles.emptyState}>
-                <IconSymbol name="clock.fill" size={32} color={colors.muted} />
-                <Text style={[styles.emptyText, { color: colors.muted }]}>
-                  No feed history yet
-                </Text>
-                <Text style={[styles.emptySubtext, { color: colors.muted }]}>
-                  Feed logs will appear here after scheduled or manual feeds
-                </Text>
-              </View>
-            )}
-          </StatCard>
-        )}
-
-        {/* Bottom spacing for tab bar */}
-        <View style={styles.bottomSpacing} />
-      </ScrollView>
-    </SafeAreaView>
+    <Surface safeTop>
+      <LogTimeline
+        sensorLogs={sensorLogs}
+        alertLogs={alerts}
+        feedLogs={feedLogs}
+        onClear={handleClear}
+      />
+    </Surface>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-  },
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(0,0,0,0.1)",
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: "600",
-    flex: 1,
-    marginLeft: 12,
-  },
-  clearButton: {
-    padding: 8,
-  },
-  scrollView: {
-    flex: 1,
-  },
-  scrollContent: {
-    padding: 20,
-    paddingBottom: 40,
-  },
-  statusContainer: {
-    gap: 8,
-  },
-  statusText: {
-    fontSize: 16,
-    fontWeight: "500",
-  },
-  logCount: {
-    fontSize: 14,
-  },
-  logControls: {
-    flexDirection: "row",
-    gap: 12,
-    marginVertical: 16,
-  },
-  logToggle: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
-    alignItems: "center",
-  },
-  toggleText: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  logList: {
-    maxHeight: 300,
-  },
-  logItem: {
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 8,
-  },
-  logHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 8,
-  },
-  logTime: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  logDate: {
-    fontSize: 12,
-  },
-  logContent: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
-    marginBottom: 8,
-  },
-  logValue: {
-    fontSize: 14,
-  },
-  sensorStatus: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-  },
-  statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-  },
-  alertLogItem: {
-    padding: 12,
-    borderRadius: 8,
-    borderWidth: 1,
-    marginBottom: 8,
-  },
-  alertHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 4,
-  },
-  alertType: {
-    fontSize: 14,
-    fontWeight: "600",
-  },
-  alertTime: {
-    fontSize: 12,
-  },
-  alertMessage: {
-    fontSize: 14,
-    lineHeight: 18,
-  },
-  emptyState: {
-    alignItems: "center",
-    paddingVertical: 32,
-    gap: 8,
-  },
-  emptyText: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  emptySubtext: {
-    fontSize: 14,
-  },
-  bottomSpacing: {
-    height: 20,
-  },
-});
