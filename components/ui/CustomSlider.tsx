@@ -1,4 +1,4 @@
-import { Colors } from "@/constants/Colors";
+import { colors } from "@/theme/colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import React, { useEffect } from "react";
 import { StyleSheet, Text, View } from "react-native";
@@ -26,7 +26,7 @@ export const CustomSlider: React.FC<CustomSliderProps> = ({
   step = 1,
 }) => {
   const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? "light"];
+  const themeColors = colors[colorScheme ?? "light"];
 
   const sliderWidth = 280; // Responsive width
   const translateX = useSharedValue(
@@ -72,13 +72,13 @@ export const CustomSlider: React.FC<CustomSliderProps> = ({
         <View
           style={[
             styles.sliderTrack,
-            { backgroundColor: colors.border, width: sliderWidth },
+            { backgroundColor: themeColors.border, width: sliderWidth },
           ]}
         >
           <Animated.View
             style={[
               styles.sliderProgress,
-              { backgroundColor: colors.primary },
+                { backgroundColor: themeColors.primary },
               progressStyle,
             ]}
           />
@@ -86,17 +86,17 @@ export const CustomSlider: React.FC<CustomSliderProps> = ({
             <Animated.View
               style={[
                 styles.sliderThumb,
-                { backgroundColor: colors.primary },
+              { backgroundColor: themeColors.primary },
                 animatedStyle,
               ]}
             />
           </GestureDetector>
         </View>
         <View style={[styles.sliderLabels, { width: sliderWidth }]}>
-          <Text style={[styles.sliderLabel, { color: colors.muted }]}>
+            <Text style={[styles.sliderLabel, { color: themeColors.textSecondary }]}>
             Small
           </Text>
-          <Text style={[styles.sliderLabel, { color: colors.muted }]}>
+          <Text style={[styles.sliderLabel, { color: themeColors.textSecondary }]}>
             Large
           </Text>
         </View>

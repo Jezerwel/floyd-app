@@ -180,5 +180,3 @@ dependencies {
         implementation jscFlavor
     }
 }
-
-apply from: "../../node_modules/@prisma/react-native/react-native-prisma.gradle"

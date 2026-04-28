@@ -50,6 +50,7 @@ export function DayChip({
       }`}
       accessibilityRole="button"
       accessibilityState={{ selected: isActive }}
+      accessibilityLabel={`${day} ${date}, ${feedCount} feed${feedCount !== 1 ? "s" : ""}${isActive ? ", selected" : ""}`}
     >
       <ThemedText
         variant="caption"

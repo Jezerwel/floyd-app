@@ -1,10 +1,11 @@
-import { ScrollView, RefreshControl } from "react-native";
+import { ScrollView, RefreshControl, View } from "react-native";
 import { useCallback, useMemo, useState } from "react";
 import { Surface } from "@/components/ui/Surface";
 import { DashboardHero } from "@/components/sections/DashboardHero";
 import { StatusStrip } from "@/components/sections/StatusStrip";
 import { AlertPanel } from "@/components/sections/AlertPanel";
 import { useESP8266 } from "@/hooks/useESP8266Context";
+import { useResponsive } from "@/hooks/useResponsive";
 import useAlerts from "@/hooks/useAlerts";
 
 function rssiToStrength(rssi: number): number {
@@ -24,6 +25,7 @@ export default function DashboardScreen() {
 
   const { alerts, alertCount } = useAlerts();
 
+  const { isPhone, isPortrait } = useResponsive();
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const handleRefresh = useCallback(async () => {
@@ -65,20 +67,44 @@ export default function DashboardScreen() {
         }
         contentContainerStyle={{ paddingBottom: 100 }}
       >
-        <DashboardHero
-          connectionStatus={esp8266Status}
-          isConnecting={isConnecting}
-          foodLevel={foodLevel}
-          distance={deviceData.distance}
-          isDistanceConnected={deviceData.ultrasonicSensorConnected ?? false}
-          onRefresh={handleRefresh}
-        />
+        {isPhone && isPortrait ? (
+          <>
+            <DashboardHero
+              connectionStatus={esp8266Status}
+              isConnecting={isConnecting}
+              foodLevel={foodLevel}
+              distance={deviceData.distance}
+              isDistanceConnected={deviceData.ultrasonicSensorConnected ?? false}
+              onRefresh={handleRefresh}
+            />
 
-        <StatusStrip
-          temperature={deviceData.temperature}
-          motorState={motorState as "idle" | "pre_spin" | "feeding" | "post_spin" | "jam_clear"}
-          wifiStrength={wifiStrength}
-        />
+            <StatusStrip
+              temperature={deviceData.temperature}
+              motorState={motorState as "idle" | "pre_spin" | "feeding" | "post_spin" | "jam_clear"}
+              wifiStrength={wifiStrength}
+            />
+          </>
+        ) : (
+          <View className="flex-row gap-3">
+            <View className="flex-1">
+              <DashboardHero
+                connectionStatus={esp8266Status}
+                isConnecting={isConnecting}
+                foodLevel={foodLevel}
+                distance={deviceData.distance}
+                isDistanceConnected={deviceData.ultrasonicSensorConnected ?? false}
+                onRefresh={handleRefresh}
+              />
+            </View>
+            <View className="flex-1 justify-center">
+              <StatusStrip
+                temperature={deviceData.temperature}
+                motorState={motorState as "idle" | "pre_spin" | "feeding" | "post_spin" | "jam_clear"}
+                wifiStrength={wifiStrength}
+              />
+            </View>
+          </View>
+        )}
 
         <AlertPanel alerts={alerts} alertCount={alertCount} />
       </ScrollView>

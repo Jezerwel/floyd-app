@@ -1,4 +1,4 @@
-import { Pressable, type PressableProps, Platform } from "react-native";
+import { Pressable, type PressableProps, Platform, AccessibilityInfo } from "react-native";
 import Animated, {
   useAnimatedStyle,
   withSpring,
@@ -6,6 +6,7 @@ import Animated, {
 } from "react-native-reanimated";
 import { ThemedText } from "./Text";
 import * as Haptics from "expo-haptics";
+import { useState, useEffect } from "react";
 
 const AnimatedPressable = Animated.createAnimatedComponent(Pressable);
 
@@ -47,16 +48,31 @@ export function Button({
   ...props
 }: ButtonProps) {
   const scale = useSharedValue(1);
+  const [reduceMotion, setReduceMotion] = useState(false);
+
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion);
+    const sub = AccessibilityInfo.addEventListener(
+      "reduceMotionChanged",
+      (enabled: boolean) => setReduceMotion(enabled)
+    );
+    return () => sub.remove();
+  }, []);
 
   const animatedStyle = useAnimatedStyle(() => ({
     transform: [{ scale: scale.value }],
   }));
 
   const handlePressIn = () => {
+    if (reduceMotion) return;
     scale.value = withSpring(0.97, { damping: 20, stiffness: 300 });
   };
 
   const handlePressOut = () => {
+    if (reduceMotion) {
+      scale.value = 1;
+      return;
+    }
     scale.value = withSpring(1, { damping: 15, stiffness: 200 });
   };
 

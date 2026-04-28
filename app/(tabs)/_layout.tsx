@@ -10,7 +10,7 @@ import Animated, {
 import { HapticTab } from "@/components/HapticTab";
 import { IconSymbol, type IconSymbolName } from "@/components/ui/IconSymbol";
 import TabBarBackground from "@/components/ui/TabBarBackground";
-import { Colors } from "@/constants/Colors";
+import { colors as theme } from "@/theme/colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 
 function AnimatedTabIcon({
@@ -73,7 +73,8 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? "light"].tint,
+        tabBarActiveTintColor: theme[colorScheme ?? "light"].primary,
+        tabBarInactiveTintColor: theme[colorScheme ?? "light"].textSecondary,
         headerShown: false,
         tabBarButton: HapticTab,
         tabBarBackground: TabBarBackground,
