@@ -247,33 +247,9 @@ const useWebSocket = (url: string | null) => {
         }
       };
 
-      websocketRef.current.onerror = (error) => {
-        console.error("WebSocket error:", error);
-
-        // Don't clear connection timeout here, let onclose handle it
-        // This prevents race conditions between error and close events
-
-        let errorMessage = "Connection error occurred";
-        // More specific error handling
-        if (error && typeof error === "object" && "message" in error) {
-          const msg = (error as any).message?.toLowerCase() || "";
-          if (msg.includes("reset") || msg.includes("connection reset")) {
-            errorMessage = "Connection was reset";
-          } else if (msg.includes("timeout")) {
-            errorMessage = "Connection timed out";
-          } else if (msg.includes("refused") || msg.includes("econnrefused")) {
-            errorMessage = "Connection refused - server may be offline";
-          } else if (msg.includes("network") || msg.includes("unreachable")) {
-            errorMessage = "Network error - check your connection";
-          }
-        }
-
-        // Only update error, don't change connection state
-        // Let onclose handle the connection state changes
-        setState((prev) => ({
-          ...prev,
-          error: errorMessage,
-        }));
+      websocketRef.current.onerror = () => {
+        // The WebSocket error event is a plain Event with no diagnostic info.
+        // Let onclose handler set the actual error/connection state.
       };
 
       websocketRef.current.onclose = (event) => {
