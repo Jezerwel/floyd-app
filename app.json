@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "floydapp",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true
     },
@@ -16,7 +15,6 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true,
       "package": "com.lump1a.floydapp"
     },
     "web": {
@@ -39,7 +37,8 @@
         "@prisma/react-native"
       ],
       "expo-font",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-image"
     ],
     "experiments": {
       "typedRoutes": true
