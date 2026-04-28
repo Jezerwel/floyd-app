@@ -1,50 +1,49 @@
-const CLOUD_SERVER = 'https://floyd-feeder.up.railway.app';
+const BASE_URL = "https://floyd-feeder.up.railway.app";
 
-export async function fetchSchedules() {
-  const res = await fetch(`${CLOUD_SERVER}/api/schedules`);
-  return res.json();
-}
-
-export async function createSchedule(data: any) {
-  const res = await fetch(`${CLOUD_SERVER}/api/schedules`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE_URL}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
   });
+  if (!res.ok) {
+    throw new Error(`API error: ${res.status} ${res.statusText}`);
+  }
   return res.json();
 }
 
-export async function updateSchedule(id: string, data: any) {
-  const res = await fetch(`${CLOUD_SERVER}/api/schedules/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  return res.json();
+export interface Schedule {
+  id: string;
+  label: string;
+  time: string;
+  days: number[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export async function deleteSchedule(id: string) {
-  const res = await fetch(`${CLOUD_SERVER}/api/schedules/${id}`, {
-    method: 'DELETE',
-  });
-  return res.json();
+export interface FeedHistoryEntry {
+  id: string;
+  timestamp: string;
+  duration: number;
+  augerSpeed: number;
+  impellerSpeed: number;
+  success: boolean;
 }
 
-export async function fetchAlertConfig() {
-  const res = await fetch(`${CLOUD_SERVER}/api/alerts/config`);
-  return res.json();
-}
-
-export async function updateAlertConfig(data: any) {
-  const res = await fetch(`${CLOUD_SERVER}/api/alerts/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(data),
-  });
-  return res.json();
-}
-
-export async function fetchFeedHistory(limit = 50) {
-  const res = await fetch(`${CLOUD_SERVER}/api/history?limit=${limit}`);
-  return res.json();
-}
+export const api = {
+  getSchedules: () => request<Schedule[]>("/api/schedules"),
+  createSchedule: (data: Omit<Schedule, "id" | "createdAt" | "updatedAt">) =>
+    request<Schedule>("/api/schedules", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+  updateSchedule: (id: string, data: Partial<Schedule>) =>
+    request<Schedule>(`/api/schedules/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    }),
+  deleteSchedule: (id: string) =>
+    request<void>(`/api/schedules/${id}`, { method: "DELETE" }),
+  getFeedHistory: (limit = 50) =>
+    request<FeedHistoryEntry[]>(`/api/history?limit=${limit}`),
+};
