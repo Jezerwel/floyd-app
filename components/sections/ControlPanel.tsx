@@ -78,6 +78,9 @@ export function ControlPanel({
           disabled={!canAct || isFeeding}
           haptic={false}
           className="w-40 h-40 rounded-full"
+          accessibilityLabel={
+            isFeeding ? "Feed in progress" : "Start feed"
+          }
         />
       </Animated.View>
 
@@ -109,18 +112,25 @@ export function ControlPanel({
 
       <View className="flex-row gap-3 mt-4">
         {isFeeding && (
-          <Button title="STOP" variant="danger" onPress={onStop} />
+          <Button
+            title="STOP"
+            variant="danger"
+            onPress={onStop}
+            accessibilityLabel="Stop feeding"
+          />
         )}
         <Button
           title="Settings"
           variant="ghost"
           onPress={onOpenSettings}
+          accessibilityLabel="Open feed settings"
         />
         {canAct && (
           <Button
             title="Clear Jam"
             variant="secondary"
             onPress={handleClearJam}
+            accessibilityLabel="Clear auger jam"
           />
         )}
       </View>
