@@ -51,11 +51,12 @@ Additionally, WiFi credentials are hardcoded, and there is no device discovery, 
 | Decision | Choice | Rationale |
 |---|---|---|
 | Protocol | MQTT | Industry standard for IoT; QoS, retain, last-will; HiveMQ free tier handles everything |
-| Broker | HiveMQ Cloud free tier | 100 devices free, already referenced in server code |
+| Broker | HiveMQ Cloud Serverless free tier | 100 connections/10GB free, no credit card, MQTT 5.0 + WebSocket + TLS support |
+| ESP MQTT library | EspMQTTClient (wraps PubSubClient) | Raw PubSubClient has documented reliability issues on ESP8266 — keepalive timeout bugs, failed reconnects (GitHub issues #243, #795, #825). EspMQTTClient handles reconnection & WiFi monitoring. |
 | ESP→Broker TLS | No TLS | ESP8266 heap constraints (~40KB free); home WiFi hop is trusted |
-| App→Broker | MQTTS (TLS) | mqtt.js handles it natively |
-| WiFi provisioning | SoftAP + in-app WebView | Android-first, full programmatic WiFi control |
-| Device pairing | Anonymous claim | No auth for now; device ID + generated MQTT password |
+| App→Broker | MQTTS (TLS) over port 8883 | mqtt.js v5.9+ with `timerVariant: 'native'` for Hermes engine compatibility |
+| WiFi provisioning | WiFiManager with custom MQTT params | Handles captive portal, SSID selector, auto-reconnect. Custom params for MQTT broker/password. |
+| Device pairing | Anonymous claim | No auth for now; device ID (chip MAC) + generated MQTT password stored in EEPROM |
 | Platform | Android-first | iOS NEHotspotConfiguration limitations unacceptable for this flow |
 
 ## 4. MQTT Topic Structure
@@ -118,13 +119,16 @@ Message format remains identical to current WebSocket JSON protocol — no chang
 | Change | Detail |
 |---|---|
 | Remove | `WebSocketsServer` — entire `webSocket.loop()`, `broadcastTXT()`, port 81 listener |
-| Add | MQTT client library (PubSubClient or AsyncMqttClient) |
-| Add | WiFi provisioning captive portal (WiFiManager or custom AP mode) |
-| Add | MQTT password generation and EEPROM storage |
-| Change | `connectToWiFi()` → try saved WiFi; fallback to AP mode on failure |
-| Change | Command handler: subscribe to `floyd/devices/{chipId}/command` |
-| Change | Sensor broadcast: publish to `floyd/devices/{chipId}/telemetry` |
-| Keep | All motor control, sensor reading, volume calculation, EEPROM config |
+| Remove | `webSocketEvent()` handler and all WebSocket-specific code |
+| Add | `EspMQTTClient` library (wraps PubSubClient with reconnection logic) |
+| Add | `WiFiManager` library with custom WiFiManagerParameter for device ID display |
+| Add | MQTT password generation + extended EEPROM storage (WiFi SSID, password, broker, MQTT password) |
+| Change | `connectToWiFi()` → try EEPROM WiFi first; fallback to `WiFiManager.autoConnect()` |
+| Change | Command handling: subscribe to `floyd/devices/{chipId}/command`; **use flag pattern — never publish from callback** |
+| Change | Sensor broadcast: publish to `floyd/devices/{chipId}/telemetry` via `mqttClient.publish()` |
+| Change | `loop()`: remove WebSocket loop; EspMQTTClient handles internal loop; add `delay(10)` for WiFi stability |
+| Critical | Add `yield()` and watchdog feeds; ensure `delay()` between MQTT loop iterations |
+| Keep | All motor control, sensor reading, volume calculation, existing EEPROM geometry config |
 
 ### 6.2 Mobile App (React Native)
 
@@ -188,11 +192,14 @@ ESP8266-specific env vars (`ESP8266_HOST`, `ESP8266_PORT`) are removed.
 
 | Risk | Mitigation |
 |---|---|
-| ESP8266 MQTT over WebSocket (ws://) requires heap | Test thoroughly; AsyncMqttClient is lighter than PubSubClient |
+| PubSubClient on ESP8266 unreliable | Use EspMQTTClient wrapper instead; add yield() + delay in loop; never publish from callback |
+| mqtt.js "Keepalive timeout" on React Native Hermes | Set `timerVariant: 'native'`, `reschedulePings: true`, `keepalive: 30` |
+| process.nextTick not available in RN | Polyfill with `setTimeout(callback, 0)` before importing mqtt |
 | No TLS on ESP→broker means MQTT password visible on LAN | Acceptable for home use; password is per-device and random |
-| HiveMQ free tier has connection limits (100 devices, 10 connections/device) | Single device well within limits |
+| HiveMQ free tier no SLA (can go down) | Acceptable for personal project; no critical uptime requirement |
 | Cron scheduler publishes via MQTT — if MQTT broker is down, feeds are missed | Add dead-letter-style FeedLog entries on publish failure |
-| WiFiManager captive portal may not play well with Android WebView | Fallback: user can use system browser at 192.168.4.1 |
+| WiFiManager custom param EEPROM save/load not built-in | Manual implementation needed; extend existing EEPROMConfig struct |
+| MQTT password must reach the phone during provisioning | WiFiManager custom parameter displayed on success page; WebView injectedJS captures it |
 
 ## 11. Next Steps
 
