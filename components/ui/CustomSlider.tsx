@@ -26,7 +26,7 @@ export const CustomSlider: React.FC<CustomSliderProps> = ({
   step = 1,
 }) => {
   const colorScheme = useColorScheme();
-  const themeColors = colors[colorScheme ?? "light"];
+  const themeColors = colors[(colorScheme ?? "light") as "light" | "dark"];
 
   const sliderWidth = 280; // Responsive width
   const translateX = useSharedValue(
@@ -63,8 +63,6 @@ export const CustomSlider: React.FC<CustomSliderProps> = ({
   const progressStyle = useAnimatedStyle(() => ({
     width: translateX.value,
   }));
-
-  const percentage = ((value - min) / (max - min)) * 100;
 
   return (
     <View style={styles.container}>

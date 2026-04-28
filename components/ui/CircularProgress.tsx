@@ -99,6 +99,8 @@ export const CircularProgress: React.FC<CircularProgressProps> = React.memo(({
   );
 });
 
+CircularProgress.displayName = "CircularProgress";
+
 const styles = StyleSheet.create({
   container: {
     position: "relative",

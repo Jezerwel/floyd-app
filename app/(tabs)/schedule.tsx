@@ -12,6 +12,7 @@ import {
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import { Surface } from "@/components/ui/Surface";
 import { ScheduleTimeline } from "@/components/sections/ScheduleTimeline";
 import { useSchedule } from "@/hooks/useSchedule";
@@ -23,7 +24,6 @@ interface ScheduleItem {
   days: number[];
   enabled: boolean;
 }
-import { useFocusEffect } from "expo-router";
 
 const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
 

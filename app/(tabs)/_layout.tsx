@@ -70,11 +70,13 @@ function AnimatedTabIcon({
 export default function TabLayout() {
   const colorScheme = useColorScheme();
 
+  const scheme = (colorScheme ?? "light") as "light" | "dark";
+
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: theme[colorScheme ?? "light"].primary,
-        tabBarInactiveTintColor: theme[colorScheme ?? "light"].textSecondary,
+        tabBarActiveTintColor: theme[scheme].primary,
+        tabBarInactiveTintColor: theme[scheme].textSecondary,
         headerShown: false,
         tabBarButton: HapticTab,
         tabBarBackground: TabBarBackground,

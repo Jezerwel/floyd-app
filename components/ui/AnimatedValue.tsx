@@ -23,34 +23,18 @@ export const AnimatedValue: React.FC<AnimatedValueProps> = ({
   duration = 500,
 }) => {
   const animatedValue = useRef(new Animated.Value(value ?? 0)).current;
-  const displayValue = useRef(value ?? 0);
-  const [displayText, setDisplayText] = React.useState(
-    value !== null && value !== undefined
-      ? `${prefix}${value.toFixed(decimals)}${suffix}`
-      : placeholder
-  );
 
   useEffect(() => {
     if (value === null || value === undefined) {
-      setDisplayText(placeholder);
       return;
     }
-
-    const listener = animatedValue.addListener(({ value: animValue }) => {
-      displayValue.current = animValue;
-      setDisplayText(`${prefix}${animValue.toFixed(decimals)}${suffix}`);
-    });
 
     Animated.timing(animatedValue, {
       toValue: value,
       duration,
       useNativeDriver: false,
     }).start();
-
-    return () => {
-      animatedValue.removeListener(listener);
-    };
-  }, [value, prefix, suffix, decimals, placeholder, duration, animatedValue]);
+  }, [value, duration, animatedValue]);
 
   const isPlaceholder = value === null || value === undefined;
 
@@ -61,7 +45,7 @@ export const AnimatedValue: React.FC<AnimatedValueProps> = ({
       ) : (
         <>
           {prefix}
-          {displayValue.current.toFixed(decimals)}
+          {value.toFixed(decimals)}
           {suffix && <Text style={[styles.suffix, suffixStyle]}>{suffix}</Text>}
         </>
       )}
