@@ -11,6 +11,8 @@ import { useEffect } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
+import "../global.css";
+
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { ESP8266Provider } from "@/hooks/useESP8266Context";
 
