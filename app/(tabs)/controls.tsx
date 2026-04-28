@@ -1,11 +1,14 @@
 import { useState, useCallback } from "react";
+import { View, ScrollView } from "react-native";
 import { Surface } from "@/components/ui/Surface";
 import { ControlPanel } from "@/components/sections/ControlPanel";
 import { SliderSheet } from "@/components/sections/SliderSheet";
 import { useESP8266 } from "@/hooks/useESP8266Context";
+import { useResponsive } from "@/hooks/useResponsive";
 
 export default function ControlsScreen() {
   const [showSettings, setShowSettings] = useState(false);
+  const { isLandscape } = useResponsive();
   const [augerSpeed, setAugerSpeed] = useState(75);
   const [impellerSpeed, setImpellerSpeed] = useState(100);
   const [feedDuration, setFeedDuration] = useState(3);
@@ -42,32 +45,61 @@ export default function ControlsScreen() {
     clearJam();
   }, [clearJam]);
 
+  const settingsProps = {
+    visible: showSettings,
+    onClose: () => setShowSettings(false),
+    augerSpeed,
+    impellerSpeed,
+    feedDuration,
+    preSpin,
+    postSpin,
+    onAugerChange: setAugerSpeed,
+    onImpellerChange: setImpellerSpeed,
+    onDurationChange: setFeedDuration,
+    onPreSpinChange: setPreSpin,
+    onPostSpinChange: setPostSpin,
+  };
+
+  if (isLandscape) {
+    return (
+      <Surface safeTop>
+        <View className="flex-1 flex-row">
+          <View className="flex-1">
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <ControlPanel
+                motorState={motorState as "idle" | "pre_spin" | "feeding" | "post_spin" | "jam_clear"}
+                isConnected={isConnected}
+                isHardwareOnline={isHardwareOnline}
+                onFeed={handleFeed}
+                onStop={handleStop}
+                onClearJam={handleClearJam}
+                onOpenSettings={() => {}}
+              />
+            </ScrollView>
+          </View>
+          <View className="flex-1">
+            <SliderSheet {...settingsProps} inline />
+          </View>
+        </View>
+      </Surface>
+    );
+  }
+
   return (
     <Surface safeTop>
-      <ControlPanel
-        motorState={motorState as "idle" | "pre_spin" | "feeding" | "post_spin" | "jam_clear"}
-        isConnected={isConnected}
-        isHardwareOnline={isHardwareOnline}
-        onFeed={handleFeed}
-        onStop={handleStop}
-        onClearJam={handleClearJam}
-        onOpenSettings={() => setShowSettings(true)}
-      />
+      <ScrollView>
+        <ControlPanel
+          motorState={motorState as "idle" | "pre_spin" | "feeding" | "post_spin" | "jam_clear"}
+          isConnected={isConnected}
+          isHardwareOnline={isHardwareOnline}
+          onFeed={handleFeed}
+          onStop={handleStop}
+          onClearJam={handleClearJam}
+          onOpenSettings={() => setShowSettings(true)}
+        />
+      </ScrollView>
 
-      <SliderSheet
-        visible={showSettings}
-        onClose={() => setShowSettings(false)}
-        augerSpeed={augerSpeed}
-        impellerSpeed={impellerSpeed}
-        feedDuration={feedDuration}
-        preSpin={preSpin}
-        postSpin={postSpin}
-        onAugerChange={setAugerSpeed}
-        onImpellerChange={setImpellerSpeed}
-        onDurationChange={setFeedDuration}
-        onPreSpinChange={setPreSpin}
-        onPostSpinChange={setPostSpin}
-      />
+      <SliderSheet {...settingsProps} />
     </Surface>
   );
 }
