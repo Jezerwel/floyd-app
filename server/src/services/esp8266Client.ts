@@ -183,6 +183,33 @@ export class ESP8266Client extends EventEmitter {
     this.emit("disconnected");
   }
 
+  async sendFeedCommand(params: {
+    augerSpeed: number;
+    impellerSpeed: number;
+    preSpinMs: number;
+    feedMs: number;
+    postSpinMs: number;
+  }): Promise<void> {
+    this.sendCommand({
+      action: 'start_feed',
+      parameters: params,
+    });
+  }
+
+  async sendJamClear(speed: number = 768, duration: number = 2000): Promise<void> {
+    this.sendCommand({
+      action: 'clear_jam',
+      parameters: { speed, duration },
+    });
+  }
+
+  async sendConfigUpdate(config: Record<string, unknown>): Promise<void> {
+    this.sendCommand({
+      action: 'set_config',
+      parameters: config,
+    });
+  }
+
   /**
    * Send command to ESP8266
    */

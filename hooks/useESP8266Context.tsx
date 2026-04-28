@@ -3,26 +3,33 @@ import React, {
   ReactNode,
   useCallback,
   useContext,
-  useEffect,
+  useMemo,
   useState,
 } from "react";
 import useWebSocket, { ConnectionQuality } from "./useWebSocket";
 
 interface FeederConfig {
-  height: number;
-  minDistance: number;
-  maxDistance: number;
+  cylinderRadius: number;
+  cylinderHeight: number;
+  frustumTopRadius: number;
+  frustumBottomRadius: number;
+  frustumHeight: number;
+  totalVolumeCm3: number;
+  defaultPreSpinMs: number;
+  defaultPostSpinMs: number;
+  defaultFeedMs: number;
 }
 
 interface ESP8266Data {
   temperature?: number;
-  sensorConnected?: boolean;
   temperatureSensorConnected?: boolean;
   ultrasonicSensorConnected?: boolean;
   distance?: number;
   foodLevelPercentage?: number;
-  relayState?: boolean;
-  motorOpened?: boolean;
+  motorState?: 'idle' | 'pre_spin' | 'feeding' | 'post_spin' | 'jam_clear';
+  augerSpeed?: number;
+  impellerSpeed?: number;
+  wifiRssi?: number;
   feederConfig?: FeederConfig;
   lastUpdate?: number;
   esp8266Connected?: boolean;
@@ -38,7 +45,15 @@ interface ESP8266ContextType {
   connect: () => void;
   disconnect: () => void;
   resetConnection: () => void;
-  toggleRelay: () => boolean;
+  startFeed: (params: {
+    augerSpeed: number;
+    impellerSpeed: number;
+    preSpinMs: number;
+    feedMs: number;
+    postSpinMs: number;
+  }) => void;
+  stopFeed: () => void;
+  clearJam: (speed?: number, duration?: number) => void;
   setSensorReadingInterval: (interval: number) => boolean;
   requestSensorData: () => boolean;
   isAutoRefreshEnabled: boolean;
@@ -89,88 +104,38 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     });
   }, [sendCommand]);
 
-  useEffect(() => {
-    if (isConnected && isAutoRefreshEnabled && autoRefreshInterval > 0) {
-      const actualInterval = autoRefreshInterval * 2;
-      const interval = setInterval(() => {
-        const timeSinceLastUpdate = deviceData.lastUpdate
-          ? Date.now() - deviceData.lastUpdate
-          : Infinity;
-        if (timeSinceLastUpdate > actualInterval * 1.5) {
-          requestSensorData();
-        }
-      }, actualInterval);
-      return () => clearInterval(interval);
-    }
-  }, [
-    isConnected,
-    isAutoRefreshEnabled,
-    autoRefreshInterval,
-    requestSensorData,
-    deviceData.lastUpdate,
-  ]);
-
-  useEffect(() => {
-    if (!lastMessage) return;
-    switch (lastMessage.type) {
-      case "sensor_data":
-        setDeviceData((prev) => ({
-          ...prev,
-          ...lastMessage.data,
-          lastUpdate: lastMessage.timestamp,
-          proxyConnected: true,
-          esp8266Connected: lastMessage.data.esp8266Connected !== false,
-        }));
-        break;
-      case "control_response":
-        setDeviceData((prev) => ({
-          ...prev,
-          ...lastMessage.data,
-          lastUpdate: lastMessage.timestamp,
-        }));
-        break;
-      case "status":
-        setDeviceData((prev) => ({
-          ...prev,
-          ...lastMessage.data,
-          lastUpdate: lastMessage.timestamp,
-          proxyConnected: true,
-          esp8266Connected: lastMessage.data.esp8266Connected !== false,
-        }));
-        break;
-      case "error":
-        console.error("Cloud Server Error:", lastMessage.data);
-        const errorMessage = lastMessage.data?.message;
-        if (
-          typeof errorMessage === "string" &&
-          errorMessage.includes("ESP8266")
-        ) {
-          setDeviceData((prev) => ({
-            ...prev,
-            esp8266Connected: false,
-          }));
-        }
-        break;
-    }
-  }, [lastMessage]);
-
-  const toggleRelay = (): boolean => {
-    const previousState = deviceData.relayState;
-    setDeviceData((prev) => ({
-      ...prev,
-      relayState: !prev.relayState,
-    }));
-    const success = sendCommand({
-      action: "toggle_relay",
+  const startFeed = useCallback((params: {
+    augerSpeed: number;
+    impellerSpeed: number;
+    preSpinMs: number;
+    feedMs: number;
+    postSpinMs: number;
+  }) => {
+    if (!isConnected) return;
+    sendCommand({
+      action: "start_feed",
+      parameters: {
+        augerSpeed: params.augerSpeed,
+        impellerSpeed: params.impellerSpeed,
+        preSpinMs: params.preSpinMs,
+        feedMs: params.feedMs,
+        postSpinMs: params.postSpinMs,
+      },
     });
-    if (!success) {
-      setDeviceData((prev) => ({
-        ...prev,
-        relayState: previousState,
-      }));
-    }
-    return success;
-  };
+  }, [isConnected, sendCommand]);
+
+  const stopFeed = useCallback(() => {
+    if (!isConnected) return;
+    sendCommand({ action: "stop_feed" });
+  }, [isConnected, sendCommand]);
+
+  const clearJam = useCallback((speed?: number, duration?: number) => {
+    if (!isConnected) return;
+    sendCommand({
+      action: "clear_jam",
+      parameters: { speed: speed || 768, duration: duration || 2000 },
+    });
+  }, [isConnected, sendCommand]);
 
   const setSensorReadingInterval = (interval: number): boolean => {
     return sendCommand({
@@ -198,6 +163,59 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
       ? "disconnected"
       : "unknown";
 
+  // Process lastMessage via useMemo instead of useEffect for derived state
+  useMemo(() => {
+    if (!lastMessage) return;
+    switch (lastMessage.type) {
+      case "sensor_data":
+        setDeviceData((prev) => ({
+          ...prev,
+          temperature: (lastMessage.data.temperature as number) ?? prev.temperature,
+          distance: (lastMessage.data.distance as number) ?? prev.distance,
+          foodLevelPercentage: (lastMessage.data.foodLevelPercentage as number) ?? prev.foodLevelPercentage,
+          temperatureSensorConnected: (lastMessage.data.temperatureSensorConnected as boolean) ?? prev.temperatureSensorConnected,
+          ultrasonicSensorConnected: (lastMessage.data.ultrasonicSensorConnected as boolean) ?? prev.ultrasonicSensorConnected,
+          motorState: (lastMessage.data.motorState as ESP8266Data['motorState']) || 'idle',
+          augerSpeed: (lastMessage.data.augerSpeed as number) ?? prev.augerSpeed,
+          impellerSpeed: (lastMessage.data.impellerSpeed as number) ?? prev.impellerSpeed,
+          lastUpdate: lastMessage.timestamp,
+          proxyConnected: true,
+          esp8266Connected: (lastMessage.data.esp8266Connected as boolean) !== false,
+        }));
+        break;
+      case "control_response":
+        setDeviceData((prev) => ({
+          ...prev,
+          motorState: (lastMessage.data.motorState as ESP8266Data['motorState']) ?? prev.motorState,
+          lastUpdate: lastMessage.timestamp,
+        }));
+        break;
+      case "status":
+        setDeviceData((prev) => ({
+          ...prev,
+          feederConfig: (lastMessage.data.feederConfig as FeederConfig) ?? prev.feederConfig,
+          wifiRssi: (lastMessage.data.wifiRssi as number) ?? prev.wifiRssi,
+          lastUpdate: lastMessage.timestamp,
+          proxyConnected: true,
+          esp8266Connected: (lastMessage.data.esp8266Connected as boolean) !== false,
+        }));
+        break;
+      case "error":
+        console.error("Cloud Server Error:", lastMessage.data);
+        const errorMessage = lastMessage.data?.message;
+        if (
+          typeof errorMessage === "string" &&
+          errorMessage.includes("ESP8266")
+        ) {
+          setDeviceData((prev) => ({
+            ...prev,
+            esp8266Connected: false,
+          }));
+        }
+        break;
+    }
+  }, [lastMessage]);
+
   const contextValue: ESP8266ContextType = {
     isConnected,
     isConnecting,
@@ -207,7 +225,9 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     connect,
     disconnect,
     resetConnection,
-    toggleRelay,
+    startFeed,
+    stopFeed,
+    clearJam,
     setSensorReadingInterval,
     requestSensorData,
     isAutoRefreshEnabled,

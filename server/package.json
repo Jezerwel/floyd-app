@@ -1,7 +1,7 @@
 {
   "name": "floyd-feeder-server",
   "version": "1.0.0",
-  "description": "Express WebSocket server for Floyd Fish Feeder - bridges React Native app to ESP8266 via MQTT",
+  "description": "Express WebSocket server for Floyd Fish Feeder - bridges React Native app to ESP8266",
   "main": "dist/server.js",
   "engines": {
     "node": ">=18.0.0"
@@ -11,7 +11,10 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "clean": "rm -rf dist",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:push": "prisma db push"
   },
   "keywords": [
     "express",
@@ -28,16 +31,19 @@
     "ws": "^8.14.2",
     "cors": "^2.8.5",
     "uuid": "^9.0.1",
-    "mqtt": "^5.3.4"
+    "@prisma/client": "^6.11.1",
+    "node-cron": "^3.0.3"
   },
-  "devDependencies": {
+    "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/ws": "^8.5.10",
     "@types/cors": "^2.8.17",
     "@types/uuid": "^9.0.7",
     "@types/node": "^20.10.5",
+    "@types/node-cron": "^3.0.11",
     "typescript": "^5.3.3",
     "nodemon": "^3.0.2",
-    "ts-node": "^10.9.2"
+    "ts-node": "^10.9.2",
+    "prisma": "^6.11.1"
   }
 }

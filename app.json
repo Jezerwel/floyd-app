@@ -35,7 +35,11 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      ["@prisma/react-native"]
+      [
+        "@prisma/react-native"
+      ],
+      "expo-font",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true
