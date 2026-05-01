@@ -1,4 +1,4 @@
-const CLOUD_SERVER = 'https://floyd-feeder.up.railway.app';
+const CLOUD_SERVER = "https://floyd-app-production.up.railway.app/";
 
 export async function fetchSchedules() {
   const res = await fetch(`${CLOUD_SERVER}/api/schedules`);
@@ -7,8 +7,8 @@ export async function fetchSchedules() {
 
 export async function createSchedule(data: any) {
   const res = await fetch(`${CLOUD_SERVER}/api/schedules`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   return res.json();
@@ -16,8 +16,8 @@ export async function createSchedule(data: any) {
 
 export async function updateSchedule(id: string, data: any) {
   const res = await fetch(`${CLOUD_SERVER}/api/schedules/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   return res.json();
@@ -25,7 +25,7 @@ export async function updateSchedule(id: string, data: any) {
 
 export async function deleteSchedule(id: string) {
   const res = await fetch(`${CLOUD_SERVER}/api/schedules/${id}`, {
-    method: 'DELETE',
+    method: "DELETE",
   });
   return res.json();
 }
@@ -37,8 +37,8 @@ export async function fetchAlertConfig() {
 
 export async function updateAlertConfig(data: any) {
   const res = await fetch(`${CLOUD_SERVER}/api/alerts/config`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   return res.json();
@@ -49,10 +49,14 @@ export async function fetchFeedHistory(limit = 50) {
   return res.json();
 }
 
-export async function claimDevice(deviceId: string, deviceName: string, mqttPassword: string) {
+export async function claimDevice(
+  deviceId: string,
+  deviceName: string,
+  mqttPassword: string,
+) {
   const res = await fetch(`${CLOUD_SERVER}/api/devices/claim`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ deviceId, deviceName, mqttPassword }),
   });
   return res.json();
