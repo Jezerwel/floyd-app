@@ -1,79 +1,83 @@
-# Bugs and Areas for Improvement
+# Known Bugs & Issues
 
-This document outlines potential bugs and areas for improvement in the ESP8266 firmware and the React Native application.
+Tracked against the current MQTT-based architecture (ESP8266 + L298N + cloud server).
 
-## ESP8266 Firmware (`ESP8266_WebSocket_Server.ino`)
+---
 
-### 1. Hardcoded WiFi Credentials
+## ESP8266 Firmware
 
-- **Issue:** The WiFi SSID and password are hardcoded in the firmware.
-- **Impact:** This is a security risk and makes it difficult to change the credentials without reflashing the device.
-- **Recommendation:** Implement a mechanism to configure the WiFi credentials at runtime, such as a web-based configuration portal or a command-line interface over the serial port.
+### 1. OneWire v2.3.5 — 85°C Stuck Reading
 
-### 2. Lack of Error Handling for `pulseIn`
+- **Issue:** OneWire library v2.3.5+ has a confirmed ESP8266 bug — temperature readings return a stuck value of **85°C** (DS18B20 power-on reset value). The library fails to drive the GPIO high during parasitic power conversion.
+- **Root cause:** PaulStoffregen/OneWire#58
+- **Workaround:** Downgrade to OneWire v2.3.0, or add `delay(1000)` after `sensor.requestTemperatures()`.
+- **Severity:** HIGH
 
-- **Issue:** The `readUltrasonicDistance` function uses `pulseIn` to measure the distance, but it does not specify a timeout.
-- **Impact:** If the sensor is not working correctly, the `pulseIn` function could block indefinitely, causing the program to hang.
-- **Recommendation:** Add a timeout to the `pulseIn` function to prevent it from blocking for too long.
+### 2. TLS Heap Exhaustion on ESP8266
 
-### 3. Noisy Sensor Readings
+- **Issue:** TLS handshake with HiveMQ Cloud consumes 40–50KB of free heap (~80KB total on ESP8266). Community reports of OOM crashes, handshake timeouts, and connection drops after large messages.
+- **Root cause:** Espressif issue #6618, PubSubClient issue #462
+- **Workaround:** Use `setInsecure()` (skip cert validation). Fall back to public `broker.hivemq.com:1883` (plain TCP) if unstable.
+- **Severity:** MEDIUM
 
-- **Issue:** The `readUltrasonicDistance` function takes a single reading from the sensor.
-- **Impact:** This can be inaccurate due to noise.
-- **Recommendation:** Take multiple readings from the sensor and average them to get a more reliable measurement.
+### 3. `pulseIn` No Timeout
 
-### 4. Blocking `delay()` in `loop()`
+- **Issue:** `readUltrasonicDistance()` uses `pulseIn` without a timeout. A faulty sensor can cause indefinite blocking.
+- **Todo:** Add `pulseIn(ECHO_PIN, HIGH, 23529)` timeout (~400cm max range).
+- **Severity:** LOW
 
-- **Issue:** The `loop()` function contains a `delay(10)` call.
-- **Impact:** While this is a small delay, it is generally not a good practice to use blocking delays in the main loop, as it can affect the responsiveness of the WebSocket server.
-- **Recommendation:** Use a non-blocking approach, such as the `millis()` function, to schedule tasks.
+### 4. Single Ultrasonic Reading
 
-### 5. Potential for Integer Overflow in `millis()`
+- **Issue:** Distance is read once per cycle. No averaging, susceptible to noise.
+- **Todo:** Take 3–5 readings and average them.
+- **Severity:** LOW
 
-- **Issue:** The code uses `millis()` to track time intervals. Since `millis()` returns an `unsigned long`, it will overflow after approximately 50 days.
-- **Impact:** This could cause issues with the timing of sensor readings and heartbeats.
-- **Recommendation:** While 50 days is a long time, it's still a potential issue for a long-running device. Use a more robust method for tracking time, such as a real-time clock (RTC) module.
+---
 
-### 6. No Reconnection Logic for WiFi
+## Mobile App
 
-- **Issue:** The code connects to WiFi in the `setup()` function, but there is no logic to handle disconnections or to attempt to reconnect if the connection is lost.
-- **Impact:** If the WiFi connection is lost, the device will not be able to communicate with the app.
-- **Recommendation:** Implement a mechanism to detect WiFi disconnections and to attempt to reconnect automatically.
+### 1. MQTT CR_LF Injection in Topic Filters
 
-### 7. Stepper Motor Control
+- **Issue:** `useMQTT.ts` uses hardcoded topic strings. Device chipId containing special characters could cause topic injection.
+- **Mitigation:** ChipId is `ESP.getChipId()` hex — alphanumeric only. Not exploitable in practice.
+- **Severity:** LOW
 
-- **Issue:** The stepper motor is controlled by the `handleRelayToggle` function.
-- **Impact:** This is not ideal, as the relay should only control the power to the motor, not the stepping sequence.
-- **Recommendation:** The stepping sequence should be handled by a separate function that is called when the feeder needs to be opened or closed.
+### 2. No Reconnection Backoff
 
-### 8. Lack of Comments
+- **Issue:** MQTT reconnection retries immediately on disconnect, potentially causing rapid reconnect loops.
+- **Todo:** Implement exponential backoff (1s, 2s, 4s, ... max 30s).
+- **Severity:** LOW
 
-- **Issue:** The code is not well-commented.
-- **Impact:** This makes it difficult to understand and maintain.
-- **Recommendation:** Add comments to the code to explain the purpose of each function and variable.
+### 3. Schedule Tab — No Loading State
 
-## React Native Application
+- **Issue:** `schedule.tsx` fetches schedules from the server but doesn't show a loading indicator during the fetch. On slow connections the list appears empty momentarily.
+- **Todo:** Add Skeleton loading state.
+- **Severity:** LOW
 
-### 1. No Error Handling for WebSocket
+---
 
-- **Issue:** The application does not appear to have any error handling for the WebSocket connection.
-- **Impact:** If the WebSocket connection fails, the application will not be able to communicate with the ESP8266, and the user will not be notified of the problem.
-- **Recommendation:** Implement error handling for the WebSocket connection to detect and handle connection errors.
+## Server
 
-### 2. No Connection Status Indicator
+### 1. Schedule Cron — No Daylight Saving Handling
 
-- **Issue:** The application does not have a connection status indicator.
-- **Impact:** The user does not know if the application is connected to the ESP8266.
-- **Recommendation:** Add a connection status indicator to the UI to show the user whether the application is connected to the ESP8266.
+- **Issue:** `scheduler.ts` uses `node-cron` with fixed UTC times. Schedules won't adjust for DST shifts.
+- **Severity:** LOW (acceptable for most use cases)
 
-### 3. No Way to Configure the IP Address
+### 2. SQLite Concurrent Writes
 
-- **Issue:** The IP address of the ESP8266 is likely hardcoded in the application.
-- **Impact:** This makes it difficult to connect to the ESP8266 if its IP address changes.
-- **Recommendation:** Implement a way for the user to configure the IP address of the ESP8266.
+- **Issue:** SQLite (via Prisma) handles concurrent writes with a file lock. Under multiple simultaneous schedule writes, some may fail.
+- **Mitigation:** Prisma retries on lock. Acceptable at single-user scale.
+- **Severity:** LOW
 
-### 4. Outdated Dependencies
+---
 
-- **Issue:** The `package.json` file shows that some of the dependencies are outdated.
-- **Impact:** This could lead to security vulnerabilities and other issues.
-- **Recommendation:** Update the dependencies to the latest versions.
+## Resolved Issues
+
+| Issue | Status | Fixed In |
+|-------|--------|----------|
+| Hardcoded WiFi credentials | ✅ WiFiManager provisioning | v2.0 |
+| No WiFi reconnection logic | ✅ WiFiManager + PubSubClient auto-reconnect | v2.0 |
+| Stepper motor control via relay | ✅ Replaced with L298N H-bridge + DC motors | v2.0 |
+| WebSocket proxy architecture | ✅ Migrated to direct MQTT | v2.0 |
+| No connection status indicator | ✅ Connection badges in dashboard | v2.0 |
+| Hardcoded ESP IP address | ✅ MQTT broker discovery, no IP needed | v2.0 |

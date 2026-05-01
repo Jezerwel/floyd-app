@@ -1,43 +1,44 @@
+# Timer Feature — Feed Duration Control
 
-# Plan of Action: Feeder Timer Feature
+Adds user-configurable feed duration to the manual feed controls.
 
-This document outlines the plan to add a timer feature to the Floyd app, allowing users to set a specific duration for the fish feeder dispenser.
+---
 
-## 1. UI Enhancements in `controls.tsx`
+## Architecture
 
-- **Add a Timer Slider:**
-  - Integrate a `CustomSlider` component into the "Feed Dispenser" card.
-  - This slider will allow users to select a duration (e.g., 1-30 seconds).
-- **Display Selected Duration:**
-  - Add a `Text` component to show the currently selected timer value.
-- **Update Button Logic:**
-  - The "Start Feeding" button will be modified to use the selected duration when activating the dispenser.
+The app sends a `feedMs` parameter with the `start_feed` MQTT command. The ESP8266 firmware runs the auger for the specified duration as part of its motor state machine.
 
-## 2. State Management in `controls.tsx`
+```
+User sets duration (1-30s) in Controls tab
+        │
+        ▼
+Controls tab publishes MQTT command:
+  {"action":"start_feed","feedMs":5000,"augerSpeed":768,...}
+        │
+        ▼
+ESP8266 receives command → enters PRE_SPIN → FEEDING (5s) → POST_SPIN → IDLE
+```
 
-- **`timerDuration` State:**
-  - Introduce a new state variable, `const [timerDuration, setTimerDuration] = useState(5);`, to hold the slider's value.
-  - The slider will update this state.
+---
 
-## 3. `useESP8266` Hook Modification
+## Implementation
 
-- **Update `toggleRelay` Function:**
-  - The `toggleRelay` function in `useESP8266Context.tsx` will be updated to accept an optional `duration` parameter.
-  - When `duration` is provided, the WebSocket message sent to the ESP8266 will be in the format `START:${duration}`.
-  - If no duration is provided, it will fall back to the existing `START` and `STOP` commands.
+### App (`app/(tabs)/controls.tsx`)
 
-## 4. ESP8266 Firmware Update
+- Add `feedDuration` slider (1–30s) to the Feed Dispenser card
+- The FEED button sends `feedMs: duration * 1000` in the MQTT command
 
-- **Modify `ESP8266_WebSocket_Server.ino`:**
-  - The WebSocket message handler will be updated to parse commands like `START:10`.
-  - When such a command is received, the firmware will:
-    1. Turn the relay ON.
-    2. Start a non-blocking timer for the specified duration.
-    3. Turn the relay OFF when the timer completes.
+### Context (`hooks/useESP8266Context.tsx`)
 
-## 5. Implementation Steps
+- `startFeed()` accepts `durationMs` parameter, passes it through in the `start_feed` command payload
 
-1. **Modify `controls.tsx`:** Add the slider and state management.
-2. **Update `useESP8266Context.tsx`:** Modify the `toggleRelay` function.
-3. **Update `ESP8266_WebSocket_Server.ino`:** Implement the timer logic in the firmware.
-4. **Test:** Thoroughly test the feature to ensure it works as expected.
+### Firmware (`ESP8266_MQTT_Server.ino`)
+
+- Motor state machine already handles `feedMs` from `start_feed` command — no changes needed
+- States: PRE_SPIN (impeller clears outlet) → FEEDING (auger runs for `feedMs`) → POST_SPIN (impeller clears remaining food)
+
+---
+
+## Status
+
+**Complete.** The firmware already parses `feedMs` from the command JSON. The app already passes it. Only UI slider integration needed.

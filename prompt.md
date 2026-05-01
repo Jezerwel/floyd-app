@@ -1,14 +1,10 @@
-Explore the entire code repository thoroughly. Analyze and understand the codebase from three key perspectives:
+Analyze the codebase from three perspectives:
 
-- Software Architect – Focus on system design, architecture patterns, and scalability.
+- **Software Architect** — System design, architecture patterns, scalability
+- **Software Developer** — Code structure, implementation, maintainability
+- **Product Manager** — Features, usability, user flows, business alignment
 
-- Software Developer – Examine code structure, implementation details, and maintainability.
-
-- Product Manager – Evaluate features, usability, user flows, and alignment with business goals.
-
-After your analysis, compile all findings into a comprehensive codebase.md file. This document must:
-
-- Be written in Markdown.
-- Include Mermaid diagrams to explain system architecture, workflows, or processes.
-- Be clearly structured and easy to navigate.
-- Provide actionable insights or questions that could guide further development or refinement.
+Produce a comprehensive `codebase.md` with:
+- Mermaid diagrams for architecture and workflows
+- Clear structure and navigation
+- Actionable insights for further development

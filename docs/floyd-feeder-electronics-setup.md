@@ -41,7 +41,7 @@ This document extracts all electronics content from the full manual setup guide,
 
 ## 02 Firmware & Libraries
 
-The sketch (`ESP8266_WebSocket_Server.ino`) is fully written. Despite the legacy filename, it is **MQTT-based** using `EspMQTTClient` for reliable reconnection and `WiFiManager` for SoftAP provisioning.
+The sketch (`ESP8266_MQTT_Server.ino`) is fully written. It is **MQTT-based** using `PubSubClient` for MQTT and `WiFiManager` for SoftAP provisioning.
 
 ### 2.1 Arduino Libraries to Install
 
@@ -49,7 +49,7 @@ Open Arduino IDE: *Tools → Manage Libraries*, search and install:
 
 | Library | Purpose | Version |
 |---|---|---|
-| **EspMQTTClient** | MQTT client with auto-reconnect and WiFi monitoring. Wraps PubSubClient — avoids known keepalive bugs. | v1.14+ |
+| **PubSubClient** | MQTT client for ESP8266 with keepalive, LWT, and QoS support. | v2.6+ |
 | **WiFiManager** (by tzapu) | Captive portal provisioning — ESP boots as AP, user enters WiFi creds via phone. | v2.0.17+ |
 | **ArduinoJson** (by Benoit Blanchon) | JSON parsing for MQTT command/response messages. | v7.x |
 | **OneWire** | OneWire protocol for DS18B20. **See known issue below.** | v2.3.0 (NOT 2.3.5+) |
@@ -61,7 +61,7 @@ Open Arduino IDE: *Tools → Manage Libraries*, search and install:
 
 ### 2.2 Flashing the Firmware
 
-1. Open `ESP8266_WebSocket_Server.ino` in Arduino IDE.
+1. Open `ESP8266_MQTT_Server.ino` in Arduino IDE.
 2. *Tools → Board → ESP8266 Boards → NodeMCU 1.0 (ESP-12E Module)* (or your specific board).
 3. Select the correct COM port under *Tools → Port*.
 4. Baud rate: `115200`. Flash Size: at least `4MB (FS:1MB OTA:~1019KB)`.
@@ -84,7 +84,7 @@ Firmware changes for TLS:
 ```cpp
 #include <WiFiClientSecure.h>
 WiFiClientSecure secureClient;
-EspMQTTClient mqttClient(secureClient);
+BearSSL::WiFiClientSecure wifiClient;
 
 // In configureMQTTClient():
 secureClient.setInsecure();

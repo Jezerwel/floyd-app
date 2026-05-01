@@ -179,7 +179,7 @@ EXPO_PUBLIC_MQTT_BROKER_URL=mqtts://x1a2b3c4d5e6f7g8h9.s1.eu.hivemq.cloud:8883
 
 The app reads `EXPO_PUBLIC_MQTT_BROKER_URL` in `hooks/useMQTT.ts:15`. Currently the app's MQTT client does **not** pass username/password — if you need per-client auth for the app, you must add `username` and `password` to the `mqtt.connect()` options in `hooks/useMQTT.ts`.
 
-**ESP8266 Firmware (`ESP8266_WebSocket_Server.ino`):**
+**ESP8266 Firmware (`ESP8266_MQTT_Server.ino`):**
 
 > **This is the hard part.** TLS on ESP8266 is well-documented as unreliable. A TLS handshake consumes 40–50KB of free heap on a chip that has ~80KB total. Community reports describe frequent OOM crashes, handshake timeouts, and connection drops after large messages. See: Espressif issue #6618, PubSubClient issue #462, ESP8266_RTOS_SDK issue #1101.
 
@@ -205,27 +205,21 @@ mqttClient.setMqttServer(savedMqttBroker, "", "", 1883);
 mqttClient.setMqttServer(savedMqttBroker, "floyd-esp", "your-password", 8883);
 ```
 
-**Change 3 — Enable SSL** — The current `EspMQTTClient` constructor uses `WiFiClient` (plain TCP). You must construct it with `WiFiClientSecure` instead. Near the top of the sketch, replace:
+**Change 3 — Enable SSL** — The current firmware uses `WiFiClient` (plain TCP). For TLS, construct with `WiFiClientSecure` instead. Near the top of the sketch, replace:
 
 ```cpp
 // Before:
-EspMQTTClient mqttClient(
-  "", "", "broker.hivemq.com", 1883, ""
-);
+WiFiClient wifiClient;
 
 // After:
 #include <WiFiClientSecure.h>
-WiFiClientSecure secureClient;
-EspMQTTClient mqttClient(secureClient);
-// Remove constructor args — set them in configureMQTTClient() instead
+BearSSL::WiFiClientSecure wifiClient;
 ```
 
-Then in `configureMQTTClient()`, add before `setMqttServer`:
+Then before connecting, add:
 
 ```cpp
-secureClient.setInsecure();  // Skips cert validation — needed because ESP8266 cannot store the full HiveMQ CA chain
-// OR provide the CA certificate:
-// BearSSL::WiFiClientSecure::setInsecure() is the pragmatic choice for ESP8266
+wifiClient.setInsecure();  // Skips cert validation — needed because ESP8266 cannot store the full HiveMQ CA chain
 ```
 
 **Before deploying**, test TLS stability over 24+ hours. If the ESP8266 drops connections or fails to reconnect after WiFi interruptions, fall back to the public broker (Option A) which uses plain TCP on port 1883 — no TLS overhead.
@@ -453,7 +447,7 @@ npx eas build --platform ios --profile production
 
 ## 05 Electronics — Firmware & Libraries
 
-The ESP8266 sketch (`ESP8266_WebSocket_Server.ino`) is fully written. Despite its legacy filename, it is an **MQTT-based firmware** using EspMQTTClient for reliable reconnection and WiFiManager for SoftAP provisioning. You only need to install libraries and flash.
+The ESP8266 sketch (`ESP8266_MQTT_Server.ino`) is fully written. It is an **MQTT-based firmware** using PubSubClient for MQTT and WiFiManager for SoftAP provisioning. You only need to install libraries and flash.
 
 ### 1. Install Arduino Libraries
 
@@ -461,7 +455,7 @@ Open Arduino IDE, go to *Tools → Manage Libraries*, and install each of these 
 
 | Library | Purpose | Recommended Version |
 |---|---|---|
-| **EspMQTTClient** | Reliable MQTT client — wraps PubSubClient with reconnection logic and WiFi monitoring. Critical: avoids raw PubSubClient keepalive bugs on ESP8266. | v1.14+ |
+| **PubSubClient** | MQTT client for ESP8266 with keepalive, LWT, and QoS support. | v2.6+ |
 | **WiFiManager** by tzapu | Captive portal provisioning — ESP boots as an AP, user connects phone and enters home WiFi credentials via a web form. | v2.0.17+ |
 | **ArduinoJson** by Benoit Blanchon | JSON parsing and serialization for command/response messages over MQTT. | v7.x |
 | **OneWire** | OneWire protocol for DS18B20 temperature sensor communication. | v2.3.8 |
@@ -469,11 +463,11 @@ Open Arduino IDE, go to *Tools → Manage Libraries*, and install each of these 
 | **ESP8266WiFi** | Built-in with ESP8266 board package. WiFi client for station mode connection. | (board package) |
 | **EEPROM** | Built-in. Persistent storage of WiFi credentials, MQTT password, sensor geometry, and calibration values. | (board package) |
 
-> **Why EspMQTTClient over raw PubSubClient:** PubSubClient on ESP8266 has documented reliability issues — keepalive timeout bugs, failed reconnections after WiFi disconnection, and crashes when publishing inside an MQTT callback (GitHub issues #243, #795, #825). EspMQTTClient wraps PubSubClient with connection state tracking, internal loop management, and WiFi monitoring. The firmware sets command flags in the callback and publishes in `loop()` to avoid crashes.
+> **Note:** The firmware uses raw PubSubClient with BearSSL WiFiClientSecure for TLS. Command flags are set inside the MQTT callback and published in `loop()` to avoid callback reentrancy issues.
 
 ### 2. Flash the firmware
 
-1. Open `ESP8266_WebSocket_Server.ino` in Arduino IDE.
+1. Open `ESP8266_MQTT_Server.ino` in Arduino IDE.
 2. Select the board: *Tools → Board → ESP8266 Boards → NodeMCU 1.0 (ESP-12E Module)* (adjust for your specific board).
 3. Select the correct COM port under *Tools → Port*.
 4. Set baud rate to `115200` and Flash Size to at least `4MB (FS:1MB OTA:~1019KB)`.
@@ -490,7 +484,7 @@ On first boot (empty EEPROM), the ESP8266 will:
 4. Broadcast an access point named `FloydFeeder-{chipId}` (e.g., `FloydFeeder-A1B2C3`).
 5. Serve a captive portal at `192.168.4.1` where the user enters home WiFi credentials.
 
-After provisioning, the ESP restarts, connects to home WiFi using the saved SSID/password, and auto-connects to the MQTT broker via EspMQTTClient.
+After provisioning, the ESP restarts, connects to home WiFi using the saved SSID/password, and auto-connects to the MQTT broker via PubSubClient.
 
 ---
 
@@ -588,7 +582,7 @@ This is the ritual that links hardware to cloud. Run through it once per device.
 
 6. **ESP8266 reboots.** WiFiManager saves the credentials to EEPROM, generates a random 8-character hex MQTT password, and restarts the ESP8266.
 
-7. **ESP8266 connects to home WiFi.** After reboot, the ESP reads credentials from EEPROM, connects to your home WiFi within 30 seconds, and then auto-connects to the HiveMQ MQTT broker via EspMQTTClient.
+7. **ESP8266 connects to home WiFi.** After reboot, the ESP reads credentials from EEPROM, connects to your home WiFi within 30 seconds, and then auto-connects to the HiveMQ MQTT broker via PubSubClient.
 
 8. **App extracts device info.** The injected JavaScript in the WebView captures the chipId and provisioning status from the WiFiManager page. It sends this back to React Native via `window.ReactNativeWebView.postMessage()`.
 

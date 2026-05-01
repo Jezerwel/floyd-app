@@ -1,107 +1,210 @@
-# Floyd Fish Feeder: Codebase Documentation
+# Floyd Feeder — Codebase Documentation
 
-This document provides a detailed breakdown of the Floyd Fish Feeder application's codebase. The system consists of a React Native mobile application for user interaction and an ESP8266-based firmware that controls the physical fish feeder.
+Cloud-connected IoT fish feeder: React Native mobile app + Express cloud server + ESP8266 MQTT firmware.
 
-## 1. High-Level Architecture
+---
 
-The application follows a client-server model operating on a local network.
+## 1. Architecture
 
-- **React Native App (Client):** A cross-platform mobile application built with Expo. It provides the user interface for monitoring sensor data, controlling the feeder, and viewing historical data. It communicates with the ESP8266 via a WebSocket connection.
-- **ESP8266 Firmware (Server):** An Arduino program running on an ESP8266 microcontroller. It hosts a WebSocket server, reads data from connected sensors (temperature, distance), and controls the motor for dispensing food.
-- **Express Server (Alternative Server):** A Node.js server that can be used in place of the ESP8266 for development and testing. It simulates the ESP8266's behavior and provides an identical WebSocket API, along with a REST API for easier debugging.
+```mermaid
+graph TB
+    subgraph App["React Native App (Expo)"]
+        UI["Screens: Dashboard, Controls, Schedule, Logs"]
+        CTX["useESP8266Context (MQTT state)"]
+        API["services/api.ts (REST client)"]
+    end
+    subgraph Cloud["Cloud Infrastructure"]
+        HIVEMQ["HiveMQ MQTT Broker"]
+        SRV["Express Server (Railway)"]
+        DB[("SQLite (Prisma)")]
+    end
+    subgraph HW["ESP8266 Feeder"]
+        FW["ESP8266_MQTT_Server.ino"]
+        L298N["L298N → Auger + Impeller"]
+        SENSORS["HC-SR04 + DS18B20"]
+    end
+    UI --> CTX
+    CTX -- mqtts://8883 --> HIVEMQ
+    API -- REST --> SRV
+    SRV -- mqtt://1883 --> HIVEMQ
+    SRV --> DB
+    HIVEMQ -- mqtts://8883 --> FW
+    FW --> L298N
+    FW --> SENSORS
+```
 
-## 2. Directory and File Structure
+---
 
-### Root Directory
+## 2. Data Flow
 
-- `.gitignore`: Specifies files and directories that Git should ignore.
-- `app.json`: Expo configuration file. Contains settings like the app's name, version, icon, and splash screen.
-- `bugs.md`: A markdown file for tracking known bugs and issues.
-- `codebase.md`: (This file) Documentation of the project structure.
-- `eas.json`: Configuration for Expo Application Services (EAS), used for building and submitting the app.
-- `eslint.config.js`: Configuration for ESLint, a tool for identifying and reporting on patterns in JavaScript.
-- `ESP8266_Setup_Guide.md`: A guide for setting up the ESP8266 hardware.
-- `ESP8266_WebSocket_Server.ino`: The Arduino firmware for the ESP8266 microcontroller. This is the heart of the fish feeder's hardware control.
-- `package.json`: Defines the project's dependencies, scripts, and metadata.
-- `package-lock.json`: Records the exact versions of the project's dependencies.
-- `prompt.md`: A file likely containing prompts or instructions for an AI assistant.
-- `README.md`: General information about the project.
-- `tsconfig.json`: TypeScript compiler configuration.
+MQTT topics under `floyd/devices/{chipId}/`:
 
-### `app/`
+| Topic | Direction | Payload |
+|-------|-----------|---------|
+| `telemetry` | ESP → App + Server | Sensor data (temp, distance, food%) |
+| `status` | ESP → App + Server | Connection state (retained) |
+| `command` | App + Server → ESP | `start_feed`, `stop_feed`, `clear_jam`, `get_sensors` |
+| `response` | ESP → App + Server | `feed_complete`, `jam_clear_complete`, errors |
+| `config` | App → ESP | Geometry/interval changes |
 
-This directory contains the application's screens and routing logic, managed by Expo Router.
+The app and server communicate RESTfully for CRUD operations (schedules, devices, history).
 
-- `_layout.tsx`: The root layout for the entire application. It sets up the main providers, like the theme and ESP8266 context.
-- `+not-found.tsx`: A screen that is displayed when a route is not found.
-- `(tabs)/`: A directory that defines a tab-based navigation layout.
-  - `_layout.tsx`: The layout for the tab navigator, defining the tabs and their appearance.
-  - `controls.tsx`: The "Controls" screen, where the user can manually dispense food and interact with the feeder.
-  - `history.tsx`: The "History" screen, which displays historical data from the feeder.
-  - `index.tsx`: The main "Dashboard" screen, showing real-time sensor data.
+---
 
-### `assets/`
+## 3. Directory Structure
 
-Contains static assets used by the application.
+```
+floyd-app/
+├── app/                        # Expo Router pages
+│   ├── _layout.tsx             # Root providers (GestureHandler, MQTT context, Theme)
+│   ├── +not-found.tsx          # 404 screen
+│   ├── provision.tsx           # WebView-based WiFi provisioning
+│   └── (tabs)/
+│       ├── _layout.tsx         # Bottom tab navigator config
+│       ├── index.tsx           # Dashboard — sensor data, alerts, connection status
+│       ├── controls.tsx        # Manual feed — speed sliders, FEED/STOP/CLEAR JAM
+│       ├── schedule.tsx        # Schedule CRUD — time picker, day toggles
+│       └── history.tsx         # Feed logs, sensor history, alerts
+├── components/
+│   ├── ESP8266Connection.tsx   # MQTT connection card (connect/disconnect/provision)
+│   ├── ThemedText.tsx          # Theme-aware text component
+│   ├── ThemedView.tsx          # Theme-aware view component
+│   ├── HapticTab.tsx           # Haptic feedback tab button
+│   ├── ExternalLink.tsx        # In-app browser link
+│   └── ui/
+│       ├── IconSymbol.tsx      # SF Symbols → MaterialIcons mapping
+│       ├── StatCard.tsx        # Animated metric card
+│       ├── CircularProgress.tsx# Animated circular gauge (food level)
+│       ├── AnimatedValue.tsx   # Animated number transitions
+│       ├── Skeleton.tsx        # Loading skeletons
+│       ├── AlertItem.tsx       # Alert display row
+│       ├── AnimatedButton.tsx  # Animated pressable button
+│       ├── BatteryLevel.tsx    # Battery indicator
+│       ├── CustomSlider.tsx    # Custom slider control
+│       ├── DistanceSensor.tsx  # Distance reading display
+│       ├── ErrorToast.tsx      # Error toast notification
+│       ├── InlineError.tsx     # Inline error/status badges
+│       ├── PaddleControl.tsx   # Paddle-style widget
+│       ├── VerticalSlider.tsx  # Vertical orientation slider
+│       ├── TabBarBackground.tsx# Tab bar background (cross-platform)
+│       └── TabButton.tsx       # Tab bar button
+├── hooks/
+│   ├── useMQTT.ts             # Core MQTT connection (mqtt.js v5)
+│   ├── useESP8266Context.tsx   # MQTT context provider + device state
+│   ├── useAlerts.ts           # Derived alerts from sensor data
+│   ├── useColorScheme.ts      # Light/dark scheme hook
+│   ├── useThemeColor.ts       # Theme color resolver
+│   └── useMountEffect.ts      # Mount-only effect
+├── services/
+│   └── api.ts                 # REST client for cloud API
+├── constants/
+│   └── Colors.ts              # Light + dark marine green palette
+├── server/
+│   ├── prisma/
+│   │   └── schema.prisma      # DB schema: Device, FeedSchedule, FeedLog, AlertConfig
+│   └── src/
+│       ├── server.ts           # Express app + REST endpoints
+│       ├── types/index.ts      # TypeScript interfaces + type guards
+│       └── services/
+│           ├── db.ts           # Prisma singleton
+│           ├── mqttClient.ts   # MQTT handler (publish/subscribe)
+│           └── scheduler.ts    # Cron-based feed execution
+├── ESP8266_MQTT_Server.ino    # ESP8266 firmware (L298N + HC-SR04 + DS18B20)
+└── docs/
+    ├── floyd-feeder-manual-setup.md
+    ├── floyd-feeder-electronics-setup.md
+    └── plans/                  # Architecture plans (excluded from updates)
+```
 
-- `fonts/`: Font files for the app.
-- `images/`: Image files, including the app icon, splash screen, and logos.
+---
 
-### `components/`
+## 4. Features
 
-A collection of reusable React components.
+| Feature | Description |
+|---------|-------------|
+| **Device Provisioning** | WiFiManager captive portal via WebView; auto-claim device via API |
+| **Live Dashboard** | Connection status, food level gauge, temperature, motor state, alerts |
+| **Manual Controls** | Auger/impeller speed sliders, feed duration, FEED/STOP/CLEAR JAM |
+| **Feeding Schedules** | Full CRUD with time picker, day-of-week, enable/disable |
+| **History & Logs** | Feed history from server, real-time sensor log, alert log |
+| **Cloud Scheduling** | Server-side cron triggers feed via MQTT |
+| **Alert System** | Low/critical food, high/low temp, sensor disconnect |
+| **Light/Dark Theme** | Marine green palette, full light and dark mode |
+| **Cross-Platform** | iOS, Android, Web |
 
-- `Collapsible.tsx`: A component that can expand and collapse to show or hide content.
-- `ESP8266Connection.tsx`: A component that manages the connection to the ESP8266, including entering the IP address.
-- `ExternalLink.tsx`: A component for opening links in the device's browser.
-- `HapticTab.tsx`: A custom tab component that provides haptic feedback.
-- `HelloWave.tsx`: An animated wave emoji component.
-- `ParallaxScrollView.tsx`: A scroll view with a parallax effect for the header.
-- `ThemedText.tsx`: A custom `Text` component that respects the application's theme.
-- `ThemedView.tsx`: A custom `View` component that respects the application's theme.
-- `ui/`: A subdirectory for more complex, specialized UI components.
-  - `AlertItem.tsx`: A component for displaying a single alert.
-  - `BatteryLevel.tsx`: A component to visualize the battery level.
-  - `CircularProgress.tsx`: A circular progress bar component.
-  - `CustomSlider.tsx`: A custom slider component.
-  - `DistanceSensor.tsx`: A component to display the distance sensor readings.
-  - `IconSymbol.ios.tsx` & `IconSymbol.tsx`: Components for displaying icons, with a platform-specific version for iOS.
-  - `PaddleControl.tsx`: A component for controlling the feeder's paddle.
-  - `StatCard.tsx`: A card component for displaying a single statistic.
-  - `TabBarBackground.ios.tsx` & `TabBarBackground.tsx`: Components for the tab bar background, with a platform-specific version for iOS.
-  - `TabButton.tsx`: A custom button for the tab bar.
-  - `VerticalSlider.tsx`: A vertical slider component.
+---
 
-### `constants/`
+## 5. REST API (Server)
 
-- `Colors.ts`: Defines the color palette used throughout the application for both light and dark themes.
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Health check + MQTT status |
+| `/api/devices/claim` | POST | Register a new feeder device |
+| `/api/devices` | GET | List claimed devices |
+| `/api/schedules` | GET/POST | List/create feed schedules |
+| `/api/schedules/:id` | PUT/DELETE | Update/delete schedule |
+| `/api/history` | GET | Feed history (with `?limit=N`) |
+| `/api/alerts/config` | GET/PUT | Read/update alert thresholds |
 
-### `hooks/`
+---
 
-Custom React hooks that encapsulate business logic and state management.
+## 6. MQTT Protocol
 
-- `useAlerts.ts`: A hook for managing and processing alerts from the feeder.
-- `useColorScheme.ts`: A hook to get the current color scheme (light/dark).
-- `useColorScheme.web.ts`: A web-specific version of `useColorScheme`.
-- `useESP8266Context.tsx`: A hook that provides access to the ESP8266 context, including the WebSocket connection and sensor data.
-- `useThemeColor.ts`: A hook for getting a color from the theme based on the current color scheme.
-- `useWebSocket.ts`: A generic hook for managing a WebSocket connection.
+### Commands (App/Server → ESP)
 
-### `scripts/`
+```json
+{"action":"start_feed","augerSpeed":768,"impellerSpeed":1023,"preSpinMs":1500,"feedMs":3000,"postSpinMs":1500}
+{"action":"stop_feed"}
+{"action":"clear_jam","speed":512,"duration":2000}
+{"action":"get_sensors"}
+{"action":"set_sensor_interval","interval":5000}
+{"action":"ping"}
+```
 
-- `reset-project.js`: A script to reset the project to a clean state.
+### Telemetry (ESP → App/Server)
 
-### `server/`
+```json
+{"type":"sensor_data","data":{"temperature":24.5,"distance":18.2,"foodLevelPercentage":73,"motorState":"idle"}}
+{"type":"control_response","data":{"action":"feed_complete","success":true,"motorState":"idle"}}
+{"type":"status","data":{"connected":true,"uptime":3600,"wifiRSSI":-65,"freeHeap":28000}}
+```
 
-This directory contains a Node.js Express server that acts as a proxy between the React Native application and the ESP8266 hardware. This proxy is essential for development and debugging, as it allows the app to communicate with the hardware without requiring a direct connection.
+---
 
-- `package.json`: Defines the server's dependencies (`express`, `ws`, `cors`) and development scripts (`dev`, `build`, `start`).
-- `tsconfig.json`: TypeScript compiler configuration for the server.
-- `nodemon.json`: Configuration for `nodemon`, which automatically restarts the server during development when file changes are detected.
-- `src/`: Contains the server's source code.
-  - `server.ts`: The main entry point for the proxy server. It initializes the Express app, creates an HTTP server, and sets up the WebSocket server. It also defines REST API endpoints for managing the ESP8266 connection and monitoring the server's status.
-  - `types/index.ts`: Contains all TypeScript interfaces and type definitions for the server, defining the shape of WebSocket messages, device state, and configuration.
-  - `services/`: Contains the core logic for the proxy server.
-    - `esp8266Client.ts`: A WebSocket client that connects to the ESP8266 hardware. It manages the connection, sends commands, and receives data from the ESP8266.
-  - `websocket/`: Contains the WebSocket handling logic.
-    - `proxyHandlers.ts`: Manages all WebSocket communication between the React Native app and the ESP8266. It handles new client connections, forwards commands to the ESP8266, and relays responses back to the clients.
+## 7. ESP8266 Firmware
+
+- **File:** `ESP8266_MQTT_Server.ino`
+- **Connectivity:** WiFiManager (SoftAP provisioning) → PubSubClient (MQTT)
+- **Motor Control:** L298N dual H-bridge — auger (Motor A) + impeller (Motor B)
+- **Sensors:** HC-SR04 ultrasonic (food level via container geometry), DS18B20 (temperature)
+- **State Machine:** IDLE → PRE_SPIN → FEEDING → POST_SPIN → IDLE (with JAM_CLEAR and STOPPING states)
+- **Persistence:** EEPROM stores WiFi creds, MQTT config, container geometry
+- **TLS:** BearSSL WiFiClientSecure with `setInsecure()` for HiveMQ Cloud
+
+### Pin Mapping
+
+| Pin | GPIO | Connection |
+|-----|------|------------|
+| D0 | GPIO16 | L298N IN4 (Impeller Dir 4) |
+| D1 | GPIO5 | HC-SR04 TRIG |
+| D2 | GPIO4 | HC-SR04 ECHO (via voltage divider) |
+| D3 | GPIO0 | L298N ENB (Impeller PWM) |
+| D4 | GPIO2 | DS18B20 DQ (4.7kΩ pull-up) |
+| D5 | GPIO14 | L298N ENA (Auger PWM) |
+| D6 | GPIO12 | L298N IN1 (Auger Dir 1) |
+| D7 | GPIO13 | L298N IN2 (Auger Dir 2) |
+| D8 | GPIO15 | L298N IN3 (Impeller Dir 3) |
+
+---
+
+## 8. Deployment
+
+**Server:** Deploy `server/` to Railway with `DATABASE_URL`, `PORT`, `MQTT_BROKER_URL` env vars. Run `npx prisma migrate deploy` after first deploy.
+
+**App:** Build with EAS:
+```bash
+npx eas build --platform android --profile production
+npx eas build --platform ios --profile production
+```
+
+**ESP8266:** Flash via Arduino IDE (NodeMCU 1.0, 115200 baud, 4MB flash).
