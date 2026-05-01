@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<!-- ==================================================================
+     LONG DOCUMENT · English · parchment design system
+     Floyd Fish Feeder — Manual Setup Guide
+     ================================================================== -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Floyd Fish Feeder — Manual Setup Guide</title>
+<meta name="author" content="Floyd Team">
+<meta name="description" content="Step-by-step manual setup for Floyd Fish Feeder v2 — covering cloud MQTT infrastructure, server deployment, mobile app build, and ESP8266 hardware wiring.">
+<meta name="keywords" content="Floyd, Fish Feeder, MQTT, ESP8266, HiveMQ, IoT, provisioning, WiFiManager, L298N, HC-SR04, DS18B20, Railway">
+<meta name="generator" content="Kami">
+<style>
+  @font-face { font-family: "JetBrains Mono"; src: url("../fonts/JetBrainsMono.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+  @font-face { font-family: "JetBrains Mono"; src: url("../fonts/JetBrainsMono.woff2") format("woff2"); font-weight: 500; font-style: normal; }
+
+  @page {
+    size: A4;
+    margin: 20mm 22mm 22mm 22mm;
+    background: #f5f4ed;
+
+    @top-right {
+      content: string(section-title);
+      font-family: Charter, Georgia, Palatino, serif;
+      font-size: 8pt;
+      color: #6b6a64;
+    }
+
+    @bottom-center {
+      content: counter(page) "  ·  Floyd Fish Feeder — Manual Setup Guide";
+      font-family: Charter, Georgia, Palatino, serif;
+      font-size: 9pt;
+      color: #6b6a64;
+    }
+  }
+  @page:first {
+    @top-right { content: ""; }
+    @bottom-center { content: ""; }
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --parchment: #f5f4ed;
+    --ivory:     #faf9f5;
+    --near-black:#141413;
+    --dark-warm: #3d3d3a;
+    --olive:     #504e49;
+    --stone:     #6b6a64;
+    --brand:     #1B365D;
+    --border:    #e8e6dc;
+    --border-soft:#e5e3d8;
+    --tag-bg:    #E4ECF5;
+
+    --serif: Charter, Georgia,
+             Palatino, "Times New Roman", serif;
+    --sans: var(--serif);
+    --mono:  "JetBrains Mono", "SF Mono", "Fira Code",
+             Consolas, Monaco, monospace;
+  }
+
+  html, body { background: var(--parchment); }
+
+  @media screen {
+    body { max-width: 210mm; margin: 0 auto; padding: 20mm 22mm 22mm 22mm; }
+  }
+
+  body {
+    color: var(--near-black);
+    font-family: var(--serif);
+    font-size: 10.5pt;
+    line-height: 1.55;
+  }
+
+  .sans { font-family: var(--sans); }
+
+  /* COVER */
+  .cover {
+    min-height: 240mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 40mm 0 0 0;
+    break-after: page;
+  }
+  .cover-eyebrow {
+    font-family: var(--sans);
+    font-size: 10pt;
+    color: var(--brand);
+    letter-spacing: 2pt;
+    text-transform: uppercase;
+    font-weight: 500;
+    margin-bottom: 18pt;
+  }
+  .cover-title {
+    font-size: 40pt;
+    font-weight: 500;
+    color: var(--near-black);
+    line-height: 1.12;
+    letter-spacing: -0.5pt;
+    margin-bottom: 16pt;
+  }
+  .cover-sub {
+    font-family: var(--sans);
+    font-size: 14pt;
+    color: var(--olive);
+    line-height: 1.45;
+    max-width: 85%;
+    margin-bottom: 30pt;
+  }
+  .cover-meta {
+    font-family: var(--sans);
+    font-size: 10pt;
+    color: var(--stone);
+    line-height: 1.55;
+    font-variant-numeric: tabular-nums;
+  }
+  .cover-meta strong { color: var(--dark-warm); font-weight: 500; }
+
+  /* TOC */
+  .toc { break-after: page; }
+  .toc h2 {
+    font-size: 22pt;
+    font-weight: 500;
+    margin-bottom: 14pt;
+    border-left: 2.5pt solid var(--brand);
+    border-radius: 1.5pt;
+    padding-left: 8pt;
+  }
+  .toc-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 6pt 0;
+    border-bottom: 0.3pt dotted var(--border);
+    font-size: 11pt;
+  }
+  .toc-num {
+    color: var(--brand);
+    font-weight: 500;
+    min-width: 30pt;
+    font-variant-numeric: tabular-nums;
+  }
+  .toc-title {
+    flex: 1;
+    color: var(--near-black);
+    padding-left: 6pt;
+  }
+  .toc-page {
+    color: var(--stone);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* HEADINGS */
+  h1 {
+    font-size: 24pt;
+    font-weight: 500;
+    line-height: 1.15;
+    letter-spacing: -0.3pt;
+    margin: 0 0 10pt 0;
+    border-left: 2.5pt solid var(--brand);
+    border-radius: 1.5pt;
+    padding-left: 8pt;
+    color: var(--near-black);
+    break-after: avoid;
+  }
+  h2 {
+    font-size: 16pt;
+    font-weight: 500;
+    line-height: 1.25;
+    margin: 24pt 0 6pt 0;
+    color: var(--near-black);
+    break-after: avoid;
+    string-set: section-title content();
+  }
+  h3 {
+    font-size: 13pt;
+    font-weight: 500;
+    line-height: 1.3;
+    margin: 18pt 0 4pt 0;
+    color: var(--dark-warm);
+    break-after: avoid;
+  }
+
+  .chapter-num {
+    font-family: var(--sans);
+    font-size: 10pt;
+    color: var(--brand);
+    letter-spacing: 1pt;
+    text-transform: uppercase;
+    font-weight: 500;
+    margin-bottom: 6pt;
+  }
+
+  /* PARAGRAPHS */
+  p { margin: 0 0 10pt 0; line-height: 1.55; color: var(--near-black); }
+
+  .lead {
+    font-size: 12pt;
+    line-height: 1.55;
+    color: var(--dark-warm);
+    margin-bottom: 14pt;
+  }
+
+  .hl { color: var(--brand); font-weight: 500; }
+  strong { font-weight: 500; }
+
+  /* LISTS */
+  ul, ol {
+    margin: 6pt 0 10pt 0;
+    padding-left: 20pt;
+    line-height: 1.55;
+  }
+  ul li::marker { color: var(--brand); }
+  ol li::marker { color: var(--brand); font-weight: 500; }
+  ul li, ol li { margin-bottom: 4pt; }
+
+  /* QUOTE */
+  blockquote, .quote {
+    border-left: 2pt solid var(--brand);
+    margin: 12pt 0;
+    padding: 4pt 0 4pt 16pt;
+    color: var(--olive);
+    line-height: 1.55;
+    break-inside: avoid;
+  }
+  blockquote .cite, .quote .cite {
+    display: block;
+    font-family: var(--sans);
+    font-size: 9pt;
+    color: var(--stone);
+    margin-top: 4pt;
+  }
+
+  /* CODE */
+  code {
+    font-family: var(--mono);
+    font-size: 9pt;
+    background: var(--ivory);
+    padding: 1pt 4pt;
+    border-radius: 2pt;
+    color: var(--dark-warm);
+  }
+  pre {
+    font-family: var(--mono);
+    font-size: 9pt;
+    line-height: 1.5;
+    background: var(--ivory);
+    border: 0.5pt solid var(--border-soft);
+    border-radius: 4pt;
+    padding: 10pt 14pt;
+    margin: 10pt 0;
+    white-space: pre-wrap;
+    color: var(--near-black);
+    break-inside: avoid;
+  }
+  pre code { background: transparent; padding: 0; font-size: inherit; }
+
+  /* TABLE (kami-table) */
+  table, .kami-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+    margin: 12pt 0;
+    break-inside: avoid;
+  }
+  table th, .kami-table th {
+    text-align: left;
+    font-family: var(--sans);
+    font-weight: 500;
+    color: var(--dark-warm);
+    padding: 6pt 8pt;
+    border-bottom: 1pt solid var(--border);
+    background: var(--ivory);
+  }
+  table td, .kami-table td {
+    padding: 5pt 8pt;
+    border-bottom: 0.3pt solid var(--border-soft);
+    vertical-align: top;
+  }
+  table.compact th, .kami-table.compact th { padding: 3pt 6pt; font-size: 8pt; }
+  table.compact td, .kami-table.compact td { padding: 2pt 6pt; font-size: 8pt; line-height: 1.4; }
+  table.financial td:not(:first-child), .kami-table.financial td:not(:first-child) {
+    text-align: right; font-variant-numeric: tabular-nums;
+  }
+  table.financial th:not(:first-child), .kami-table.financial th:not(:first-child) { text-align: right; }
+  table.striped tbody tr:nth-child(even) td, .kami-table.striped tbody tr:nth-child(even) td {
+    background: var(--ivory);
+  }
+  table .total td, .kami-table .total td {
+    font-weight: 500; border-top: 1pt solid var(--brand); border-bottom: none; color: var(--near-black);
+  }
+
+  /* CALLOUT / TAKEAWAY */
+  .callout {
+    background: var(--ivory);
+    border-left: 2pt solid var(--brand);
+    padding: 10pt 14pt;
+    border-radius: 3pt;
+    margin: 12pt 0;
+    line-height: 1.55;
+    break-inside: avoid;
+  }
+  .takeaway {
+    background: var(--ivory);
+    border: 0.5pt solid var(--border);
+    border-radius: 4pt;
+    padding: 10pt 14pt;
+    margin: 14pt 0;
+    break-inside: avoid;
+  }
+  .takeaway-label {
+    font-family: var(--sans);
+    font-size: 9pt;
+    color: var(--brand);
+    letter-spacing: 1pt;
+    text-transform: uppercase;
+    font-weight: 500;
+    margin-bottom: 4pt;
+  }
+
+  /* TAG */
+  .tag {
+    display: inline-block;
+    background: var(--tag-bg);
+    color: var(--brand);
+    font-family: var(--sans);
+    font-size: 9pt;
+    font-weight: 500;
+    padding: 1pt 6pt;
+    border-radius: 3pt;
+    letter-spacing: 0.4pt;
+    text-transform: uppercase;
+    margin-right: 4pt;
+  }
+
+  /* FIGURE */
+  figure { margin: 14pt 0; break-inside: avoid; }
+  figure img { max-width: 100%; border-radius: 4pt; }
+  figcaption {
+    font-family: var(--sans);
+    font-size: 9pt;
+    color: var(--stone);
+    margin-top: 6pt;
+    text-align: center;
+  }
+
+  /* CHAPTER BREAK */
+  .chapter { break-before: page; }
+
+  .step-num {
+    font-family: var(--sans);
+    font-size: 9pt;
+    color: var(--brand);
+    font-weight: 500;
+    margin-right: 4pt;
+  }
+</style>
+</head>
+<body>
+
+<!-- COVER -->
+<section class="cover">
+  <div>
+    <div class="cover-eyebrow">Setup Guide</div>
+    <div class="cover-title">Floyd Fish Feeder<br>Manual Setup</div>
+    <div class="cover-sub">A complete walkthrough for bringing Floyd v2 online — from cloud broker to PCB. Covers HiveMQ Cloud, Railway server deployment, Expo mobile build, and ESP8266 hardware wiring with L298N motor driver, HC-SR04 ultrasonic, and DS18B20 temperature sensor.</div>
+  </div>
+  <div class="cover-meta">
+    <strong>Floyd Team</strong><br>
+    Version 2.0 · 2026.05<br>
+    Floyd Fish Feeder Project
+  </div>
+</section>
+
+<!-- TOC -->
+<section class="toc">
+  <h2>Contents</h2>
+  <div class="toc-item"><span class="toc-num">01</span><span class="toc-title">Executive Summary</span></div>
+  <div class="toc-item"><span class="toc-num">02</span><span class="toc-title">Software Setup — Cloud &amp; Infrastructure</span></div>
+  <div class="toc-item"><span class="toc-num">03</span><span class="toc-title">Software Setup — Server</span></div>
+  <div class="toc-item"><span class="toc-num">04</span><span class="toc-title">Software Setup — Mobile App</span></div>
+  <div class="toc-item"><span class="toc-num">05</span><span class="toc-title">Electronics Setup — ESP8266 Firmware &amp; Libraries</span></div>
+  <div class="toc-item"><span class="toc-num">06</span><span class="toc-title">Electronics Setup — Motor &amp; Sensor Wiring</span></div>
+  <div class="toc-item"><span class="toc-num">07</span><span class="toc-title">Electronics Setup — Power &amp; Enclosure</span></div>
+  <div class="toc-item"><span class="toc-num">08</span><span class="toc-title">Electronics Setup — First-Boot Provisioning</span></div>
+  <div class="toc-item"><span class="toc-num">09</span><span class="toc-title">Appendix — Pin Reference, Wiring Schematic, Environment Variables</span></div>
+</section>
+
+<!-- Chapter 01 -->
+<section>
+  <div class="chapter-num">01 · Executive Summary</div>
+  <h1>Executive Summary</h1>
+
+  <p class="lead">
+    Floyd Fish Feeder v2 has migrated from a local WebSocket proxy architecture to a <span class="hl">cloud MQTT</span> design. This document covers every manual step required after the code has been pulled — categorized by <span class="hl">Software</span> (what you configure on screens) and <span class="hl">Electronics</span> (what you wire with your hands). No step requires code changes; all configuration is via environment variables, Arduino Library Manager installs, and physical wiring.
+  </p>
+
+  <p>
+    The architecture has three software components and one hardware component, all connected through HiveMQ Cloud MQTT: the ESP8266 publishes telemetry and subscribes to commands, the mobile app publishes commands and subscribes to telemetry, and the Express server handles REST APIs and cron-based scheduled feeding — with no real-time message relaying.
+  </p>
+
+  <h2>Prerequisites Checklist</h2>
+  <ul>
+    <li>GitHub repository cloned locally (<code>floyd-app</code>)</li>
+    <li>Arduino IDE installed (tested with v2.x)</li>
+    <li>Node.js v20+ and npm available on the server machine</li>
+    <li>Expo CLI and EAS CLI available for mobile builds</li>
+    <li>ESP8266 NodeMCU (e.g., ESP-12E, Wemos D1 Mini) on hand</li>
+    <li>L298N motor driver module, HC-SR04 ultrasonic sensor, DS18B20 temperature sensor</li>
+    <li>12V DC power supply for motors, 5V USB power for ESP8266</li>
+  </ul>
+
+  <div class="takeaway">
+    <div class="takeaway-label">Estimated Setup Time</div>
+    First-time setup: approximately <span class="hl">2–3 hours</span>. Subsequent device provisioning: <span class="hl">5 minutes</span> per feeder.
+  </div>
+</section>
+
+<!-- Chapter 02 -->
+<section class="chapter">
+  <div class="chapter-num">02 · Software — Cloud &amp; Infrastructure</div>
+  <h1>Cloud &amp; Infrastructure Setup</h1>
+
+  <p class="lead">
+    Three cloud services must be provisioned before the feeder can operate: <span class="hl">HiveMQ Cloud</span> as the MQTT broker, <span class="hl">Railway</span> to host the Express server, and the Expo mobile app built for your target device.
+  </p>
+
+  <h2>1. HiveMQ Cloud — MQTT Broker</h2>
+
+  <p>The broker operates as an anonymous pub/sub hub (HiveMQ free tier). All three participants — ESP8266, mobile app, and server — communicate through topics under <code>floyd/devices/{chipId}/</code>.</p>
+
+  <h3>Step 1.1: Create the HiveMQ cluster</h3>
+  <ol>
+    <li>Go to <code>https://console.hivemq.cloud</code> and sign up for a free account.</li>
+    <li>Create a new <strong>Serverless</strong> cluster. Choose the region closest to your devices (AWS us-east-1 or eu-west-1 are good defaults).</li>
+    <li>Free tier limits: <span class="hl">100 simultaneous connections</span>, <span class="hl">10 GB data/month</span>, no SLA. Adequate for a single device, tight for a fleet.</li>
+  </ol>
+
+  <h3>Step 1.2: Configure cluster access (if using HiveMQ Cloud cluster URL)</h3>
+  <p>If using the public broker (<code>broker.hivemq.com</code>), skip this step. If using a dedicated HiveMQ Cloud cluster URL, navigate to <em>Access Management</em> in the console and create credentials for the ESP8266 and server. Note the cluster URL — it will be something like <code>xxxxx.s1.eu.hivemq.cloud</code>.</p>
+
+  <div class="callout">
+    The current firmware and app default to the <strong>public HiveMQ broker</strong> (<code>broker.hivemq.com:1883</code> for server, <code>mqtts://broker.hivemq.com:8883</code> for app). No HiveMQ console setup is required unless you switch to a dedicated cluster.
+  </div>
+
+  <h2>2. Railway — Server Hosting</h2>
+
+  <p>The Express server (<code>server/</code>) must be deployed to Railway and connected to the MQTT broker. It provides REST APIs for device claiming, feed scheduling, feed history, and alert configuration.</p>
+
+  <h3>Step 2.1: Deploy via Railway dashboard</h3>
+  <ol>
+    <li>Log in to <code>https://railway.app</code> and create a new project.</li>
+    <li>Connect the GitHub repository. Set the root directory to <code>server/</code>.</li>
+    <li>Railway auto-detects the Node.js build from <code>package.json</code>. The start command is <code>npm start</code> — verify this runs your <code>server.ts</code> entrypoint (compiled to <code>dist/</code> or via <code>tsx</code>).</li>
+    <li>Add a volume mount for the SQLite database file to persist data across deploys: mount a volume at <code>/app/server/prisma</code> (or wherever <code>floyd.db</code> lives).</li>
+  </ol>
+
+  <h3>Step 2.2: Set environment variables</h3>
+  <p>In the Railway project dashboard, go to <em>Variables</em> and add:</p>
+  <pre><code>PORT=3001
+DATABASE_URL=file:./prisma/floyd.db
+MQTT_BROKER_URL=mqtt://broker.hivemq.com:1883</code></pre>
+
+  <p>If using a dedicated HiveMQ cluster with authentication, also add:</p>
+  <pre><code>MQTT_BROKER_URL=mqtts://xxxxx.s1.eu.hivemq.cloud:8883
+MQTT_USERNAME=your-device-username
+MQTT_PASSWORD=your-device-password</code></pre>
+
+  <h3>Step 2.3: Run database migration</h3>
+  <p>After the first deploy, SSH into the Railway instance or use the Railway CLI to run the Prisma migration:</p>
+  <pre><code>npx prisma migrate deploy</code></pre>
+  <p>This applies the <code>20260501140214_add_device_model</code> migration, creating the Device table alongside FeedSchedule, FeedLog, and AlertConfig.</p>
+
+  <h3>Step 2.4: Verify the deployment</h3>
+  <p>Hit the health endpoint: <code>GET https://your-railway-url.up.railway.app/health</code>. You should see a JSON response with server uptime and MQTT connection status.</p>
+</section>
+
+<!-- Chapter 03 -->
+<section class="chapter">
+  <div class="chapter-num">03 · Software — Server</div>
+  <h1>Server Setup — Local / Development (Optional)</h1>
+
+  <p class="lead">
+    For development or self-hosting on a VPS, run the server locally. These steps are <span class="hl">not needed</span> if you deployed to Railway as described in Chapter 02.
+  </p>
+
+  <h2>1. Install dependencies</h2>
+  <pre><code>cd server/
+npm install</code></pre>
+  <p>Installs <code>mqtt@^5.15.1</code>, <code>@prisma/client</code>, <code>express</code>, <code>node-cron</code>, and their transitive dependencies.</p>
+
+  <h2>2. Create environment file</h2>
+  <pre><code># server/.env
+PORT=3001
+DATABASE_URL=file:./prisma/floyd.db
+MQTT_BROKER_URL=mqtt://broker.hivemq.com:1883</code></pre>
+
+  <h2>3. Apply database migration</h2>
+  <pre><code>npx prisma migrate deploy</code></pre>
+  <p>Creates the SQLite database at <code>server/prisma/floyd.db</code> with all four models: Device, FeedSchedule, FeedLog, and AlertConfig.</p>
+
+  <h2>4. Start the server</h2>
+  <pre><code>npm run dev    # tsx watch — auto-reload on changes
+# or
+npm start      # production — runs compiled JS</code></pre>
+
+  <p>The server initializes the MQTT client on startup, connects to the broker, and begins listening for cron-triggered feed schedules. The Express API is available at <code>http://localhost:3001</code>.</p>
+
+  <div class="callout">
+    The server no longer hosts a WebSocket proxy. The <code>server/src/services/esp8266Client.ts</code> and <code>server/src/websocket/</code> directory have been removed. Real-time communication flows through MQTT directly.
+  </div>
+</section>
+
+<!-- Chapter 04 -->
+<section class="chapter">
+  <div class="chapter-num">04 · Software — Mobile App</div>
+  <h1>Mobile App Setup</h1>
+
+  <p class="lead">
+    The React Native / Expo app connects directly to the MQTT broker (no proxy). It requires native modules for WebView provisioning and MQTT transport. A <span class="hl">full rebuild</span> is mandatory after dependency changes.
+  </p>
+
+  <h2>1. Install dependencies</h2>
+  <pre><code># From the project root (floyd-app/)
+npm install</code></pre>
+  <p>Key app dependencies:</p>
+  <ul>
+    <li><code>mqtt@^5.15.1</code> — MQTT client with Hermes-compatible native timer</li>
+    <li><code>react-native-webview</code> — embedded browser for WiFiManager captive portal</li>
+    <li><code>react-native-quick-base64</code> — fast Base64 for MQTT payloads on Hermes</li>
+    <li><code>@react-native-async-storage/async-storage</code> — persist chipId and MQTT password</li>
+    <li><code>expo-router</code> — file-based navigation</li>
+  </ul>
+
+  <h2>2. Environment variable (optional)</h2>
+  <p>If not using the public HiveMQ broker, create <code>.env</code> in the project root:</p>
+  <pre><code>EXPO_PUBLIC_MQTT_BROKER_URL=mqtts://your-cluster.s1.eu.hivemq.cloud:8883</code></pre>
+  <p>The default is <code>mqtts://broker.hivemq.com:8883</code> — no env file needed for public broker usage.</p>
+
+  <h2>3. Configure the API server URL</h2>
+  <p>In <code>services/api.ts</code>, confirm <code>CLOUD_SERVER</code> points to your deployed Railway URL or local IP:</p>
+  <pre><code>const CLOUD_SERVER = "https://your-app.up.railway.app";</code></pre>
+
+  <h2>4. Rebuild the app (mandatory)</h2>
+  <p>Native modules (<code>react-native-webview</code>, <code>react-native-quick-base64</code>) require a clean prebuild and native compilation. Do not rely on Expo Go for production.</p>
+  <pre><code># Clean rebuild
+npx expo prebuild --clean
+
+# Android
+npx expo run:android
+
+# iOS
+npx expo run:ios</code></pre>
+
+  <p>For EAS builds (recommended for distribution):</p>
+  <pre><code>npx eas build --platform android --profile production
+npx eas build --platform ios --profile production</code></pre>
+
+  <div class="callout">
+    The app includes a <code>process.nextTick</code> polyfill (in <code>hooks/useMQTT.ts</code>) for Hermes engine compatibility. Without it, the MQTT client emits <em>"Keepalive timeout"</em> errors on React Native. The polyfill is already wired — no manual action needed.
+  </div>
+
+  <h2>5. Verify the build</h2>
+  <ol>
+    <li>Install the app on a physical device or emulator.</li>
+    <li>On first launch, the app checks AsyncStorage for <code>floydChipId</code>. If absent, it shows the provisioning screen or prompts the user to provision a new device.</li>
+    <li>The app auto-connects to the MQTT broker when a chipId is available.</li>
+  </ol>
+</section>
+
+<!-- Chapter 05 -->
+<section class="chapter">
+  <div class="chapter-num">05 · Electronics — Firmware &amp; Libraries</div>
+  <h1>ESP8266 Firmware &amp; Arduino Libraries</h1>
+
+  <p class="lead">
+    The ESP8266 sketch (<code>ESP8266_WebSocket_Server.ino</code>) is fully written. Despite its legacy filename, it is an <span class="hl">MQTT-based firmware</span> using EspMQTTClient for reliable reconnection and WiFiManager for SoftAP provisioning. You only need to install libraries and flash.
+  </p>
+
+  <h2>1. Install Arduino Libraries</h2>
+  <p>Open Arduino IDE, go to <em>Tools → Manage Libraries</em>, and install each of these at the specified version or latest:</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Library</th>
+        <th>Purpose</th>
+        <th>Recommended Version</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>EspMQTTClient</strong></td>
+        <td>Reliable MQTT client — wraps PubSubClient with reconnection logic and WiFi monitoring. Critical: avoids raw PubSubClient keepalive bugs on ESP8266.</td>
+        <td>v1.14+</td>
+      </tr>
+      <tr>
+        <td><strong>WiFiManager</strong> by tzapu</td>
+        <td>Captive portal provisioning — ESP boots as an AP, user connects phone and enters home WiFi credentials via a web form.</td>
+        <td>v2.0.17+</td>
+      </tr>
+      <tr>
+        <td><strong>ArduinoJson</strong> by Benoit Blanchon</td>
+        <td>JSON parsing and serialization for command/response messages over MQTT.</td>
+        <td>v7.x</td>
+      </tr>
+      <tr>
+        <td><strong>OneWire</strong></td>
+        <td>OneWire protocol for DS18B20 temperature sensor communication.</td>
+        <td>v2.3.8</td>
+      </tr>
+      <tr>
+        <td><strong>DallasTemperature</strong></td>
+        <td>High-level interface for DS18B20 sensor reading and conversion.</td>
+        <td>v3.11.1</td>
+      </tr>
+      <tr>
+        <td><strong>ESP8266WiFi</strong></td>
+        <td>Built-in with ESP8266 board package. WiFi client for station mode connection.</td>
+        <td>(board package)</td>
+      </tr>
+      <tr>
+        <td><strong>EEPROM</strong></td>
+        <td>Built-in. Persistent storage of WiFi credentials, MQTT password, sensor geometry, and calibration values.</td>
+        <td>(board package)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Why EspMQTTClient over raw PubSubClient:</strong> PubSubClient on ESP8266 has documented reliability issues — keepalive timeout bugs, failed reconnections after WiFi disconnection, and crashes when publishing inside an MQTT callback (GitHub issues #243, #795, #825). EspMQTTClient wraps PubSubClient with connection state tracking, internal loop management, and WiFi monitoring. The firmware sets command flags in the callback and publishes in <code>loop()</code> to avoid crashes.
+  </div>
+
+  <h2>2. Flash the firmware</h2>
+  <ol>
+    <li>Open <code>ESP8266_WebSocket_Server.ino</code> in Arduino IDE.</li>
+    <li>Select the board: <em>Tools → Board → ESP8266 Boards → NodeMCU 1.0 (ESP-12E Module)</em> (adjust for your specific board).</li>
+    <li>Select the correct COM port under <em>Tools → Port</em>.</li>
+    <li>Set baud rate to <code>115200</code> and Flash Size to at least <code>4MB (FS:1MB OTA:~1019KB)</code>.</li>
+    <li>Press <strong>Upload</strong> (Ctrl+U).</li>
+    <li>Open the Serial Monitor (<code>115200</code> baud) to watch the boot sequence.</li>
+  </ol>
+
+  <h2>3. First-boot behavior</h2>
+  <p>On first boot (empty EEPROM), the ESP8266 will:</p>
+  <ol>
+    <li>Attempt to load saved WiFi credentials from EEPROM — fails (checksum mismatch).</li>
+    <li>Fall back to loading geometry-only config (container dimensions, sensor intervals).</li>
+    <li>Detect no WiFi connection → enter <strong>provisioning mode</strong> (SoftAP).</li>
+    <li>Broadcast an access point named <code>FloydFeeder-{chipId}</code> (e.g., <code>FloydFeeder-A1B2C3</code>).</li>
+    <li>Serve a captive portal at <code>192.168.4.1</code> where the user enters home WiFi credentials.</li>
+  </ol>
+
+  <p>After provisioning, the ESP restarts, connects to home WiFi using the saved SSID/password, and auto-connects to the MQTT broker via EspMQTTClient.</p>
+</section>
+
+<!-- Chapter 06 -->
+<section class="chapter">
+  <div class="chapter-num">06 · Electronics — Motor &amp; Sensor Wiring</div>
+  <h1>Motor &amp; Sensor Wiring</h1>
+
+  <p class="lead">
+    The ESP8266 controls two DC motors through an L298N dual H-bridge driver and reads food level and temperature from HC-SR04 and DS18B20 sensors respectively. <span class="hl">All pin assignments are defined</span> in the firmware — do not change them without updating both the <code>#define</code> macros and the wiring.
+  </p>
+
+  <h2>1. L298N Motor Driver — Auger &amp; Impeller</h2>
+
+  <p>The L298N module drives two motors independently. Motor A controls the auger (food delivery screw). Motor B controls the impeller (food scattering spinner). PWM speed is controllable on both channels.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>L298N Pin</th>
+        <th>ESP8266 Pin</th>
+        <th>GPIO</th>
+        <th>Function</th>
+        <th>Wire Color (suggested)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ENA</td>
+        <td>D5</td>
+        <td>GPIO14</td>
+        <td>Auger PWM speed (0–1023)</td>
+        <td>Orange</td>
+      </tr>
+      <tr>
+        <td>IN1</td>
+        <td>D6</td>
+        <td>GPIO12</td>
+        <td>Auger direction 1</td>
+        <td>Yellow</td>
+      </tr>
+      <tr>
+        <td>IN2</td>
+        <td>D7</td>
+        <td>GPIO13</td>
+        <td>Auger direction 2</td>
+        <td>Green</td>
+      </tr>
+      <tr>
+        <td>ENB</td>
+        <td>D3</td>
+        <td>GPIO0</td>
+        <td>Impeller PWM speed (0–1023)</td>
+        <td>Blue</td>
+      </tr>
+      <tr>
+        <td>IN3</td>
+        <td>D8</td>
+        <td>GPIO15</td>
+        <td>Impeller direction 3</td>
+        <td>Purple</td>
+      </tr>
+      <tr>
+        <td>IN4</td>
+        <td>D0</td>
+        <td>GPIO16</td>
+        <td>Impeller direction 4</td>
+        <td>Gray</td>
+      </tr>
+      <tr>
+        <td>VCC (12V)</td>
+        <td colspan="2">External 12V power supply (+) terminal</td>
+        <td>Motor power</td>
+        <td>Red</td>
+      </tr>
+      <tr>
+        <td>GND</td>
+        <td colspan="2">Shared ground — connect to ESP8266 GND and power supply GND</td>
+        <td>Common ground</td>
+        <td>Black</td>
+      </tr>
+      <tr>
+        <td>OUT1, OUT2</td>
+        <td colspan="2">Connect to Auger DC motor terminals</td>
+        <td>Motor output A</td>
+        <td>—</td>
+      </tr>
+      <tr>
+        <td>OUT3, OUT4</td>
+        <td colspan="2">Connect to Impeller DC motor terminals</td>
+        <td>Motor output B</td>
+        <td>—</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Shared ground is critical.</strong> The L298N GND, ESP8266 GND, and power supply GND must all be connected. Without a shared ground, motor PWM signals are floating and the motors will not respond or may behave erratically.
+  </div>
+
+  <h2>2. HC-SR04 Ultrasonic Distance Sensor — Food Level</h2>
+
+  <p>The HC-SR04 measures the distance from the sensor head to the food surface inside the container. The firmware converts this to a fill percentage using the cylinder + frustum volume formula stored in EEPROM.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>HC-SR04 Pin</th>
+        <th>ESP8266 Pin</th>
+        <th>GPIO</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>VCC</td>
+        <td>5V (Vin / VU)</td>
+        <td>—</td>
+        <td>HC-SR04 works at 5V logic. ESP8266 GPIO is 3.3V tolerant on input but the TRIG pin outputs 3.3V — some HC-SR04 modules accept this. If unreliable, use a logic level shifter.</td>
+      </tr>
+      <tr>
+        <td>TRIG</td>
+        <td>D1</td>
+        <td>GPIO5</td>
+        <td>10µs pulse triggers an 8-cycle ultrasonic burst.</td>
+      </tr>
+      <tr>
+        <td>ECHO</td>
+        <td>D2</td>
+        <td>GPIO4</td>
+        <td>Pulse width proportional to distance. <strong>Use a voltage divider</strong> (1kΩ + 2kΩ) to drop 5V ECHO to ~3.3V. Connecting 5V directly to GPIO4 can damage the ESP8266.</td>
+      </tr>
+      <tr>
+        <td>GND</td>
+        <td>GND</td>
+        <td>—</td>
+        <td>Shared ground.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>3. DS18B20 Temperature Sensor</h2>
+
+  <p>The DS18B20 uses OneWire protocol on a single GPIO pin. A 4.7kΩ pull-up resistor is required between the data line and 3.3V.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>DS18B20 Pin</th>
+        <th>ESP8266 Pin</th>
+        <th>GPIO</th>
+        <th>Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>VDD</td>
+        <td>3.3V</td>
+        <td>—</td>
+        <td>The sensor operates at 3.3V or 5V. Use 3.3V to avoid level conversion.</td>
+      </tr>
+      <tr>
+        <td>DQ (Data)</td>
+        <td>D4</td>
+        <td>GPIO2</td>
+        <td>OneWire data line. <strong>4.7kΩ resistor</strong> required between DQ and 3.3V as a pull-up.</td>
+      </tr>
+      <tr>
+        <td>GND</td>
+        <td>GND</td>
+        <td>—</td>
+        <td>Shared ground.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>GPIO2 (D4) on ESP8266 NodeMCU:</strong> This pin has a built-in pull-up resistor and is used during boot to set flash mode. If the DS18B20 data line is pulled low at boot, the ESP8266 may fail to start. The 4.7kΩ pull-up to 3.3V mitigates this. If you encounter boot failures, try GPIO0 (D3) or GPIO14 (D5) and update the <code>ONE_WIRE_BUS</code> define.
+  </div>
+</section>
+
+<!-- Chapter 07 -->
+<section class="chapter">
+  <div class="chapter-num">07 · Electronics — Power &amp; Enclosure</div>
+  <h1>Power Supply &amp; Enclosure</h1>
+
+  <p class="lead">
+    The system requires two power rails: <span class="hl">5V USB</span> for the ESP8266 logic and sensors, and <span class="hl">12V DC</span> for the L298N motor driver. Proper power isolation prevents motor noise from resetting the microcontroller.
+  </p>
+
+  <h2>1. Power architecture</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Component</th>
+        <th>Voltage</th>
+        <th>Typical Current</th>
+        <th>Power Source</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>ESP8266 NodeMCU</td>
+        <td>5V via USB / Vin</td>
+        <td>~80 mA (idle), ~300 mA (WiFi TX)</td>
+        <td>USB power adapter (5V 1A minimum)</td>
+      </tr>
+      <tr>
+        <td>L298N Motor Driver (logic)</td>
+        <td>5V (from ESP8266 VU or onboard regulator)</td>
+        <td>~20 mA</td>
+        <td>ESP8266 5V pin <em>or</em> L298N onboard 5V regulator (remove jumper if using onboard)</td>
+      </tr>
+      <tr>
+        <td>L298N Motor Driver (motors)</td>
+        <td>12V DC</td>
+        <td>500 mA – 2A per motor (depends on load)</td>
+        <td>12V 2A+ DC power supply</td>
+      </tr>
+      <tr>
+        <td>HC-SR04</td>
+        <td>5V</td>
+        <td>~15 mA</td>
+        <td>ESP8266 5V pin</td>
+      </tr>
+      <tr>
+        <td>DS18B20</td>
+        <td>3.3V</td>
+        <td>~1 mA</td>
+        <td>ESP8266 3.3V pin</td>
+      </tr>
+      <tr>
+        <td>Auger DC Motor</td>
+        <td>12V</td>
+        <td>200–800 mA (under load)</td>
+        <td>L298N OUT1/OUT2 terminals</td>
+      </tr>
+      <tr>
+        <td>Impeller DC Motor</td>
+        <td>12V</td>
+        <td>200–800 mA (under load)</td>
+        <td>L298N OUT3/OUT4 terminals</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout">
+    <strong>Motor noise isolation:</strong> Place a 100µF electrolytic capacitor across the 12V power input to the L298N, and a 0.1µF ceramic capacitor across each motor terminal pair. This suppresses voltage spikes that can reset the ESP8266. Keep motor power wires routed away from sensor signal wires.
+  </div>
+
+  <h2>2. Enclosure considerations</h2>
+  <ul>
+    <li>The ESP8266 should be mounted away from the food container to avoid WiFi signal attenuation from metal components.</li>
+    <li>The HC-SR04 ultrasonic sensor must be mounted <strong>facing downward</strong> into the food container, with an unobstructed cone for the ultrasonic beam (15° beam angle).</li>
+    <li>The DS18B20 should be placed where it reads ambient temperature — not directly touching metal that could conduct heat from the motors.</li>
+    <li>The L298N generates significant heat during continuous operation. Ensure ventilation or a small heatsink.</li>
+    <li>If the enclosure is outdoors or in a high-humidity environment (e.g., above an aquarium), conformal-coat exposed PCB contacts or use a sealed enclosure with cable glands.</li>
+  </ul>
+</section>
+
+<!-- Chapter 08 -->
+<section class="chapter">
+  <div class="chapter-num">08 · Electronics — First-Boot Provisioning</div>
+  <h1>First-Boot Provisioning Walkthrough</h1>
+
+  <p class="lead">
+    This is the ritual that links hardware to cloud. Run through it once per device. The provisioning flow uses the <span class="hl">WiFiManager captive portal</span> loaded inside a WebView in the Floyd mobile app.
+  </p>
+
+  <h2>Step-by-step</h2>
+
+  <ol>
+    <li>
+      <strong>Power on the ESP8266.</strong> On first boot (or after EEPROM wipe), the firmware detects no saved WiFi credentials and enters SoftAP mode. The onboard LED should blink rapidly.
+    </li>
+    <li>
+      <strong>Open the Wi-Fi settings on your phone.</strong> Look for a network named <code>FloydFeeder-XXXX</code> (where XXXX is the chip ID, e.g., <code>FloydFeeder-A1B2C3</code>). <span class="hl">Connect to it.</span> The password is not set (open AP).
+    </li>
+    <li>
+      <strong>Open the Floyd app.</strong> If no device is provisioned, it should show the provisioning screen. If it doesn't, navigate to the provisioning route (e.g., the app's <code>/provision</code> screen).
+    </li>
+    <li>
+      <strong>The WebView loads the captive portal.</strong> The app opens <code>http://192.168.4.1</code> inside a WebView. This is the WiFiManager configuration page served by the ESP8266.
+    </li>
+    <li>
+      <strong>Select your home WiFi network and enter the password.</strong> The captive portal scans for available networks. Select yours, enter the password, and tap <em>Save</em>.
+    </li>
+    <li>
+      <strong>ESP8266 reboots.</strong> WiFiManager saves the credentials to EEPROM, generates a random 8-character hex MQTT password, and restarts the ESP8266.
+    </li>
+    <li>
+      <strong>ESP8266 connects to home WiFi.</strong> After reboot, the ESP reads credentials from EEPROM, connects to your home WiFi within 30 seconds, and then auto-connects to the HiveMQ MQTT broker via EspMQTTClient.
+    </li>
+    <li>
+      <strong>App extracts device info.</strong> The injected JavaScript in the WebView captures the chipId and provisioning status from the WiFiManager page. It sends this back to React Native via <code>window.ReactNativeWebView.postMessage()</code>.
+    </li>
+    <li>
+      <strong>App calls the server to claim the device.</strong> The app sends a <code>POST /api/devices/claim</code> with the chipId, device name, and the MQTT password (extracted from the provisioning page or derived deterministically).
+    </li>
+    <li>
+      <strong>Server registers the device and subscribes to telemetry.</strong> The server creates a Device record in the database and subscribes to <code>floyd/devices/{chipId}/telemetry</code>, <code>/status</code>, and <code>/response</code> topics on the MQTT broker.
+    </li>
+    <li>
+      <strong>App connects to MQTT.</strong> The app saves the chipId to AsyncStorage, triggers the MQTT connection in the app context, and subscribes to the same topics. The dashboard should show live sensor data within seconds.
+    </li>
+  </ol>
+
+  <div class="takeaway">
+    <div class="takeaway-label">Re-provisioning</div>
+    To wipe saved credentials and return to provisioning mode, either: (a) call the <code>factory_reset</code> MQTT command, (b) clear EEPROM by uploading a blank sketch temporarily, or (c) hold a physical reset button wired to GPIO0 while powering on (if implemented in hardware).
+  </div>
+
+  <h2>What the topics look like after provisioning</h2>
+  <p>Once all three participants are connected, data flows through these MQTT topics (where <code>{chipId}</code> is the ESP's hex chip ID):</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Topic</th>
+        <th>Direction</th>
+        <th>Payload Example</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>floyd/devices/{chipId}/telemetry</code></td>
+        <td>ESP → App + Server</td>
+        <td><code>{"type":"sensor_data","data":{"temperature":24.5,"distance":18.2,"foodLevelPercentage":73}}</code></td>
+      </tr>
+      <tr>
+        <td><code>floyd/devices/{chipId}/status</code></td>
+        <td>ESP → App + Server</td>
+        <td><code>{"type":"status","data":{"connected":true}}</code></td>
+      </tr>
+      <tr>
+        <td><code>floyd/devices/{chipId}/command</code></td>
+        <td>App + Server → ESP</td>
+        <td><code>{"action":"start_feed","augerSpeed":768,"impellerSpeed":1023,"preSpinMs":1500,"feedMs":3000,"postSpinMs":1500}</code></td>
+      </tr>
+      <tr>
+        <td><code>floyd/devices/{chipId}/response</code></td>
+        <td>ESP → App + Server</td>
+        <td><code>{"type":"control_response","data":{"action":"feed_complete","success":true,"motorState":"idle"}}</code></td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- Chapter 09 -->
+<section class="chapter">
+  <div class="chapter-num">09 · Appendix</div>
+  <h1>Appendix</h1>
+
+  <h2>A. Complete Pin Reference</h2>
+
+  <table class="compact">
+    <thead>
+      <tr>
+        <th>ESP8266 Pin</th>
+        <th>GPIO</th>
+        <th>Connected To</th>
+        <th>Purpose</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>D0</td><td>GPIO16</td><td>L298N IN4</td><td>Impeller Direction 4</td></tr>
+      <tr><td>D1</td><td>GPIO5</td><td>HC-SR04 TRIG</td><td>Ultrasonic trigger pulse</td></tr>
+      <tr><td>D2</td><td>GPIO4</td><td>HC-SR04 ECHO (via divider)</td><td>Ultrasonic echo pulse width</td></tr>
+      <tr><td>D3</td><td>GPIO0</td><td>L298N ENB</td><td>Impeller PWM speed</td></tr>
+      <tr><td>D4</td><td>GPIO2</td><td>DS18B20 DQ (4.7kΩ pull-up)</td><td>OneWire temperature data</td></tr>
+      <tr><td>D5</td><td>GPIO14</td><td>L298N ENA</td><td>Auger PWM speed</td></tr>
+      <tr><td>D6</td><td>GPIO12</td><td>L298N IN1</td><td>Auger Direction 1</td></tr>
+      <tr><td>D7</td><td>GPIO13</td><td>L298N IN2</td><td>Auger Direction 2</td></tr>
+      <tr><td>D8</td><td>GPIO15</td><td>L298N IN3</td><td>Impeller Direction 3</td></tr>
+      <tr><td>GND</td><td>—</td><td>L298N GND, HC-SR04 GND, DS18B20 GND, 12V PSU GND</td><td>Common ground bus</td></tr>
+      <tr><td>3.3V</td><td>—</td><td>DS18B20 VDD</td><td>Temperature sensor power</td></tr>
+      <tr><td>5V (VU)</td><td>—</td><td>HC-SR04 VCC</td><td>Ultrasonic sensor power</td></tr>
+    </tbody>
+  </table>
+
+  <h2>B. Wiring Schematic (Text Reference)</h2>
+
+  <pre><code>
+  ESP8266 NodeMCU           L298N Motor Driver
+  ┌──────────────┐          ┌──────────────────────┐
+  │ D5 (GPIO14)  ├──────────┤ ENA    (Auger PWM)    │
+  │ D6 (GPIO12)  ├──────────┤ IN1    (Auger Dir 1)  │
+  │ D7 (GPIO13)  ├──────────┤ IN2    (Auger Dir 2)  │
+  │ D3 (GPIO0)   ├──────────┤ ENB    (Impeller PWM) │
+  │ D8 (GPIO15)  ├──────────┤ IN3    (Impeller Dir3)│
+  │ D0 (GPIO16)  ├──────────┤ IN4    (Impeller Dir4)│
+  │ GND          ├──────────┤ GND                   │
+  │              │          │ OUT1─── Auger Motor +  │
+  │              │          │ OUT2─── Auger Motor -  │
+  │              │          │ OUT3─── Impeller M +   │
+  │              │          │ OUT4─── Impeller M -   │
+  │              │          │ 12V──── 12V PSU +     │
+  └──────────────┘          └──────────────────────┘
+
+  ESP8266 NodeMCU           HC-SR04 Ultrasonic
+  ┌──────────────┐          ┌──────────────┐
+  │ D1 (GPIO5)   ├──────────┤ TRIG         │
+  │ D2 (GPIO4)   ├──[1kΩ]───┤ ECHO  ───╮  │
+  │              │   │       │      [2kΩ]  │
+  │ GND          ├───┴───────┤ GND  ───╯  │
+  │ 5V (VU)      ├──────────┤ VCC         │
+  └──────────────┘          └──────────────┘
+  (Voltage divider: ECHO → 1kΩ → D2 → 2kΩ → GND drops 5V to ~3.3V)
+
+  ESP8266 NodeMCU           DS18B20 Temperature
+  ┌──────────────┐          ┌──────────────┐
+  │ D4 (GPIO2)   ├──────────┤ DQ (Data)    │
+  │ 3.3V         ├──[4.7kΩ]─┤ DQ (pull-up) │
+  │ 3.3V         ├──────────┤ VDD          │
+  │ GND          ├──────────┤ GND          │
+  └──────────────┘          └──────────────┘
+
+  Common Ground Bus: ESP GND ≡ L298N GND ≡ HC-SR04 GND ≡ DS18B20 GND ≡ 12V PSU GND
+  12V PSU (+) → L298N 12V terminal
+  5V USB → ESP8266 micro-USB port
+  </code></pre>
+
+  <h2>C. Environment Variables Reference</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Variable</th>
+        <th>Where</th>
+        <th>Default</th>
+        <th>Required?</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>PORT</code></td>
+        <td>server/.env or Railway Variables</td>
+        <td><code>3001</code></td>
+        <td>No — defaults to 3001</td>
+      </tr>
+      <tr>
+        <td><code>DATABASE_URL</code></td>
+        <td>server/.env or Railway Variables</td>
+        <td><code>file:./prisma/floyd.db</code></td>
+        <td><span class="hl">Yes</span> — Prisma requires it</td>
+      </tr>
+      <tr>
+        <td><code>MQTT_BROKER_URL</code></td>
+        <td>server/.env or Railway Variables</td>
+        <td><code>mqtt://broker.hivemq.com:1883</code></td>
+        <td>No — defaults to public broker</td>
+      </tr>
+      <tr>
+        <td><code>MQTT_USERNAME</code></td>
+        <td>server/.env or Railway Variables</td>
+        <td>(empty)</td>
+        <td>No — only for private HiveMQ clusters</td>
+      </tr>
+      <tr>
+        <td><code>MQTT_PASSWORD</code></td>
+        <td>server/.env or Railway Variables</td>
+        <td>(empty)</td>
+        <td>No — only for private HiveMQ clusters</td>
+      </tr>
+      <tr>
+        <td><code>EXPO_PUBLIC_MQTT_BROKER_URL</code></td>
+        <td>app .env or expo config</td>
+        <td><code>mqtts://broker.hivemq.com:8883</code></td>
+        <td>No — defaults to public broker MQTTS</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>D. Build Verification Checklist</h2>
+
+  <p>After completing all setup steps, verify each layer independently:</p>
+
+  <ol>
+    <li><strong>MQTT broker:</strong> Use MQTT Explorer or <code>mosquitto_sub</code> to connect to the broker and check that you can publish/subscribe on a test topic.</li>
+    <li><strong>Server:</strong> Hit <code>/health</code> and <code>/api/devices</code> endpoints. The server should report MQTT connection status.</li>
+    <li><strong>ESP8266:</strong> After provisioning, check the Serial Monitor at <code>115200</code> baud. You should see <code>[MQTT] Connected to broker</code> and periodic sensor broadcasts.</li>
+    <li><strong>App:</strong> Open the app. After provisioning, the dashboard should show live temperature and food level readings. Tap a feed button — the ESP should activate the motors.</li>
+    <li><strong>Scheduled feed:</strong> Create a schedule via the app's schedules API. Wait for the cron trigger — the ESP should execute a feed without any app interaction.</li>
+  </ol>
+
+  <div class="takeaway">
+    <div class="takeaway-label">Done</div>
+    Your Floyd Fish Feeder is online. The app shows real-time sensor data. The server manages schedules. The ESP8266 runs autonomously. All communication flows through cloud MQTT — no WebSocket proxy, no local network dependency. <span class="hl">You can feed your fish from anywhere in the world.</span>
+  </div>
+</section>
+
+</body>
+</html>
