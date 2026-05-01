@@ -4,7 +4,7 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -58,9 +58,22 @@ interface Schedule {
 
 const DAY_LABELS = ["S", "M", "T", "W", "Th", "F", "S"];
 
+async function safeJson<T>(res: Response): Promise<T> {
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${res.status}: ${text || res.statusText}`);
+  }
+  try {
+    return await res.json();
+  } catch {
+    throw new Error("Invalid JSON response from server");
+  }
+}
+
 async function fetchSchedules(): Promise<Schedule[]> {
   const res = await fetch(`${CLOUD_SERVER}/api/schedules`);
-  return res.json();
+  const data = await safeJson<Schedule[]>(res);
+  return Array.isArray(data) ? data : [];
 }
 
 async function createSchedule(data: {
@@ -74,7 +87,7 @@ async function createSchedule(data: {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return safeJson<Schedule>(res);
 }
 
 async function updateSchedule(
@@ -91,7 +104,7 @@ async function updateSchedule(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
-  return res.json();
+  return safeJson<Schedule>(res);
 }
 
 async function deleteSchedule(id: string): Promise<void> {
@@ -134,6 +147,10 @@ export default function ScheduleScreen() {
     }
   }, []);
 
+  useEffect(() => {
+    loadSchedules();
+  }, [loadSchedules]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     await loadSchedules();
@@ -162,7 +179,7 @@ export default function ScheduleScreen() {
     setFormLabel(schedule.label);
     setFormTime(schedule.time);
     setPickerDate(timeStringToDate(schedule.time));
-    setFormDays([...schedule.days]);
+    setFormDays([...(schedule.days ?? [false, false, false, false, false, false, false])]);
     setFormEnabled(schedule.enabled);
     setShowTimePicker(false);
     setShowModal(true);
@@ -201,12 +218,16 @@ export default function ScheduleScreen() {
 
       if (editingId) {
         const updated = await updateSchedule(editingId, payload);
-        setSchedules((prev) =>
-          prev.map((s) => (s._id === editingId ? updated : s)),
-        );
+        if (updated && updated._id) {
+          setSchedules((prev) =>
+            prev.map((s) => (s._id === editingId ? updated : s)),
+          );
+        }
       } else {
         const created = await createSchedule(payload);
-        setSchedules((prev) => [...prev, created]);
+        if (created && created._id) {
+          setSchedules((prev) => [...prev, created]);
+        }
       }
       setShowModal(false);
       resetForm();
@@ -221,7 +242,7 @@ export default function ScheduleScreen() {
     const newEnabled = !schedule.enabled;
     setSchedules((prev) =>
       prev.map((s) =>
-        s._id === schedule._id ? { ...s, enabled: newEnabled } : s,
+        s && s._id === schedule._id ? { ...s, enabled: newEnabled } : s,
       ),
     );
     try {
@@ -234,7 +255,7 @@ export default function ScheduleScreen() {
     } catch {
       setSchedules((prev) =>
         prev.map((s) =>
-          s._id === schedule._id ? { ...s, enabled: schedule.enabled } : s,
+          s && s._id === schedule._id ? { ...s, enabled: schedule.enabled } : s,
         ),
       );
     }
@@ -337,7 +358,7 @@ export default function ScheduleScreen() {
 
       {!_loading && (
         <FlatList
-          data={schedules}
+          data={schedules.filter((s): s is Schedule => !!s && !!s._id)}
           keyExtractor={(item) => item._id}
           renderItem={renderScheduleItem}
           contentContainerStyle={styles.listContent}
@@ -482,10 +503,7 @@ export default function ScheduleScreen() {
                     if (date) {
                       setPickerDate(date);
                       setFormTime(dateToTimeString(date));
-                      setShowTimePicker(false);
                     }
-                  }}
-                  onDismiss={() => {
                     setShowTimePicker(false);
                   }}
                 />

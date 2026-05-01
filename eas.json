@@ -6,6 +6,10 @@
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease"
+      },
+      "env": {
+        "EXPO_PUBLIC_MQTT_BROKER_URL": "mqtts://4db1d3fef94e4b7d9600811e579488e7.s1.eu.hivemq.cloud:8883",
+        "EXPO_PUBLIC_API_URL": "https://floyd-app-production.up.railway.app"
       }
     },
     "preview": {
@@ -14,12 +18,20 @@
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease"
+      },
+      "env": {
+        "EXPO_PUBLIC_MQTT_BROKER_URL": "mqtts://4db1d3fef94e4b7d9600811e579488e7.s1.eu.hivemq.cloud:8883",
+        "EXPO_PUBLIC_API_URL": "https://floyd-app-production.up.railway.app"
       }
     },
     "production": {
       "android": {
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease"
+      },
+      "env": {
+        "EXPO_PUBLIC_MQTT_BROKER_URL": "mqtts://4db1d3fef94e4b7d9600811e579488e7.s1.eu.hivemq.cloud:8883",
+        "EXPO_PUBLIC_API_URL": "https://floyd-app-production.up.railway.app"
       }
     }
   }

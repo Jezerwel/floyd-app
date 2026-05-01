@@ -63,6 +63,7 @@ export default function LogsScreen() {
   const fetchFeedHistory = useCallback(async () => {
     try {
       const res = await fetch(`${CLOUD_SERVER}/api/history?limit=50`);
+      if (!res.ok) throw new Error(`API ${res.status}`);
       const data = await res.json();
       if (data.success && data.logs) {
         setFeedLogs(data.logs);
