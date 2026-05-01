@@ -64,8 +64,6 @@ export const CustomSlider: React.FC<CustomSliderProps> = ({
     width: translateX.value,
   }));
 
-  const percentage = ((value - min) / (max - min)) * 100;
-
   return (
     <View style={styles.container}>
       <View style={styles.sliderContainer}>

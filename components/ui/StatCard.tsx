@@ -14,7 +14,7 @@ interface StatCardProps {
   delay?: number;
 }
 
-export const StatCard: React.FC<StatCardProps> = React.memo(({
+export const StatCard: React.FC<StatCardProps> = React.memo(function StatCard({
   title,
   value,
   unit,
@@ -22,7 +22,7 @@ export const StatCard: React.FC<StatCardProps> = React.memo(({
   color,
   children,
   delay = 0,
-}) => {
+}) {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? "light"];
 

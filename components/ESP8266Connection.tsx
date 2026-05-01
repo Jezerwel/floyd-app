@@ -44,7 +44,7 @@ const ESP8266Connection: React.FC = () => {
   return (
     <View style={styles.container}>
       {!isConnected && (
-        <StatCard title="MQTT Device" icon="globe" color={colors.primary}>
+        <StatCard title="Cloud Connection" icon="globe" color={colors.primary}>
           <View style={styles.formContainer}>
             {error && (
               <View
@@ -93,7 +93,7 @@ const ESP8266Connection: React.FC = () => {
                 <IconSymbol name="globe" size={32} color={colors.primary} />
               </View>
               <Text style={[styles.cloudTitle, { color: colors.text }]}>
-                Floyd Feeder MQTT
+                Floyd Feeder Cloud
               </Text>
               <Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
                 {chipId ? "Waiting for the feeder to come online" : "Provision a feeder to connect from anywhere"}
@@ -116,7 +116,7 @@ const ESP8266Connection: React.FC = () => {
               onPress={handleConnect}
               disabled={isConnecting || !chipId}
               accessibilityRole="button"
-              accessibilityLabel="Reconnect to MQTT broker"
+              accessibilityLabel="Reconnect to cloud"
             >
               {isConnecting ? (
                 <>
@@ -148,7 +148,7 @@ const ESP8266Connection: React.FC = () => {
 
       {isConnected && (
         <StatCard
-          title="Connected to MQTT"
+          title="Connected"
           icon="checkmark.circle.fill"
           color={colors.success}
         >
@@ -173,7 +173,7 @@ const ESP8266Connection: React.FC = () => {
                 style={[styles.actionButton, { backgroundColor: colors.error }]}
                 onPress={handleDisconnect}
                 accessibilityRole="button"
-                accessibilityLabel="Disconnect from MQTT broker"
+                accessibilityLabel="Disconnect from cloud"
               >
                 <IconSymbol name="xmark" size={16} color="white" />
                 <Text style={styles.actionButtonText}>Disconnect</Text>
@@ -186,7 +186,7 @@ const ESP8266Connection: React.FC = () => {
                 ]}
                 onPress={resetConnection}
                 accessibilityRole="button"
-                accessibilityLabel="Reconnect to MQTT broker"
+                accessibilityLabel="Reconnect to cloud"
               >
                 <IconSymbol name="arrow.clockwise" size={16} color="white" />
                 <Text style={styles.actionButtonText}>Reconnect</Text>

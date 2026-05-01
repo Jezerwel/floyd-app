@@ -28,10 +28,10 @@ const MOTOR_STATE_CONFIG: Record<
   { label: string; icon: string; colorKey: "success" | "primary" | "warning" | "error" | "muted" }
 > = {
   idle: { label: "Idle", icon: "circle", colorKey: "muted" },
-  pre_spin: { label: "Pre-Spinning", icon: "arrow.triangle.2.circlepath", colorKey: "primary" },
+  pre_spin: { label: "Getting ready", icon: "arrow.triangle.2.circlepath", colorKey: "primary" },
   feeding: { label: "Feeding", icon: "gearshape.fill", colorKey: "success" },
-  post_spin: { label: "Post-Spinning", icon: "arrow.triangle.2.circlepath", colorKey: "warning" },
-  jam_clear: { label: "Clearing Jam", icon: "exclamationmark.triangle.fill", colorKey: "error" },
+  post_spin: { label: "Finishing up", icon: "arrow.triangle.2.circlepath", colorKey: "warning" },
+  jam_clear: { label: "Unclogging", icon: "exclamationmark.triangle.fill", colorKey: "error" },
 };
 
 function getWifiRating(rssi: number): { label: string; bars: number } {
@@ -132,19 +132,19 @@ export default function DashboardScreen() {
     }
     if (esp8266Status === "connected") {
       return {
-        status: "Connected to MQTT",
+        status: "Online",
         color: colors.success,
         icon: "checkmark.circle.fill",
       };
     } else if (esp8266Status === "disconnected") {
       return {
-        status: "MQTT OK, ESP8266 Offline",
+        status: "Cloud online, feeder offline",
         color: colors.warning,
         icon: "exclamationmark.triangle.fill",
       };
     }
     return {
-      status: "MQTT Connected",
+      status: "Connecting...",
       color: colors.success,
       icon: "checkmark.circle.fill",
     };
@@ -229,60 +229,60 @@ export default function DashboardScreen() {
         )}
 
         {isConnected && (
-          <StatCard
-            title="MQTT Device Status"
-            icon="globe"
-            color={colors.secondary}
-          >
-            <View style={styles.proxyStatusContainer}>
-              <View style={styles.statusRow}>
-                <IconSymbol
-                  name="checkmark.circle.fill"
-                  size={16}
-                  color={colors.success}
-                />
-                <Text style={[styles.statusText, { color: colors.text }]}>
-                  MQTT Broker: Connected
-                </Text>
-              </View>
-              <View style={styles.statusRow}>
-                <IconSymbol
-                  name={
-                    esp8266Status === "connected"
-                      ? "checkmark.circle.fill"
-                      : "xmark.circle.fill"
-                  }
-                  size={16}
-                  color={
-                    esp8266Status === "connected"
-                      ? colors.success
-                      : colors.error
-                  }
-                />
-                <Text style={[styles.statusText, { color: colors.text }]}>
-                  ESP8266 Hardware:{" "}
-                  {esp8266Status === "connected"
-                    ? "Connected"
-                    : esp8266Status === "disconnected"
-                    ? "Disconnected"
-                    : "Unknown"}
-                </Text>
-              </View>
-              {esp8266Status === "disconnected" && (
-                <View
-                  style={[
-                    styles.helpBox,
-                    { backgroundColor: colors.warning + "20" },
-                  ]}
-                >
-                  <Text style={[styles.helpText, { color: colors.text }]}>
-                    The MQTT broker is working, but the ESP8266 hardware is
-                    not responding. Check device power and WiFi connection.
-                  </Text>
-                </View>
-              )}
+        <StatCard
+          title="Device Status"
+          icon="globe"
+          color={colors.secondary}
+        >
+          <View style={styles.proxyStatusContainer}>
+            <View style={styles.statusRow}>
+              <IconSymbol
+                name="checkmark.circle.fill"
+                size={16}
+                color={colors.success}
+              />
+              <Text style={[styles.statusText, { color: colors.text }]}>
+                Cloud connection: Online
+              </Text>
             </View>
-          </StatCard>
+            <View style={styles.statusRow}>
+              <IconSymbol
+                name={
+                  esp8266Status === "connected"
+                    ? "checkmark.circle.fill"
+                    : "xmark.circle.fill"
+                }
+                size={16}
+                color={
+                  esp8266Status === "connected"
+                    ? colors.success
+                    : colors.error
+                }
+              />
+              <Text style={[styles.statusText, { color: colors.text }]}>
+                Feeder:{" "}
+                {esp8266Status === "connected"
+                  ? "Online"
+                  : esp8266Status === "disconnected"
+                  ? "Offline"
+                  : "Unknown"}
+              </Text>
+            </View>
+            {esp8266Status === "disconnected" && (
+              <View
+                style={[
+                  styles.helpBox,
+                  { backgroundColor: colors.warning + "20" },
+                ]}
+              >
+                <Text style={[styles.helpText, { color: colors.text }]}>
+                  The cloud is connected, but the feeder is not responding.
+                  Check power and WiFi connection.
+                </Text>
+              </View>
+            )}
+          </View>
+        </StatCard>
         )}
 
         <StatCard
@@ -310,7 +310,7 @@ export default function DashboardScreen() {
               <View style={styles.motorSpeeds}>
                 <View style={styles.speedRow}>
                   <Text style={[styles.speedLabel, { color: colors.muted }]}>
-                    Auger
+                    Feed
                   </Text>
                   <View style={styles.speedBarContainer}>
                     <View
@@ -329,7 +329,7 @@ export default function DashboardScreen() {
                 </View>
                 <View style={styles.speedRow}>
                   <Text style={[styles.speedLabel, { color: colors.muted }]}>
-                    Impeller
+                    Spread
                   </Text>
                   <View style={styles.speedBarContainer}>
                     <View
@@ -391,7 +391,7 @@ export default function DashboardScreen() {
                       },
                     ]}
                   >
-                    Distance:{" "}
+                    Level:{" "}
                     {distance !== null && distance !== undefined
                       ? `${distance.toFixed(1)}cm`
                       : "No data"}
@@ -399,7 +399,7 @@ export default function DashboardScreen() {
                 </View>
                 {!isUltrasonicSensorConnected && isConnected && (
                   <Text style={[styles.sensorWarning, { color: colors.error }]}>
-                    Ultrasonic sensor disconnected
+                    Food level sensor disconnected
                   </Text>
                 )}
               </View>

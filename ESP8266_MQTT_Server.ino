@@ -1,7 +1,8 @@
 // Floyd Feeder v2 — L298N Motor Driver Firmware
 // ESP8266 MQTT client controlling auger + impeller via L298N
 #include <ESP8266WiFi.h>
-#include <EspMQTTClient.h>
+#include <PubSubClient.h>
+#include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 #include <ArduinoJson.h>
 #include <OneWire.h>
@@ -10,10 +11,11 @@
 
 char savedSSID[33] = "";
 char savedPassword[65] = "";
-char savedMqttBroker[64] = "broker.hivemq.com";
+char savedMqttBroker[64] = "4db1d3fef94e4b7d9600811e579488e7.s1.eu.hivemq.cloud";
+char savedMqttUsername[33] = "floyd-server";
 
 String deviceChipId = String(ESP.getChipId(), HEX);
-String mqttPassword = "";
+String mqttPassword = "@@Feedfrendz11@@";
 String mqttClientId = "floyd-" + deviceChipId;
 String topicCommand;
 String topicTelemetry;
@@ -23,7 +25,8 @@ String pendingCommandPayload = "";
 String pendingResponse = "";
 volatile bool pendingCommand = false;
 
-EspMQTTClient mqttClient(1883, "floyd-unconfigured");
+BearSSL::WiFiClientSecure wifiClient;
+PubSubClient mqttClient(wifiClient);
 
 // === Pin Definitions ===
 
@@ -133,6 +136,7 @@ struct EEPROMConfig {
   char wifiSSID[33];
   char wifiPassword[65];
   char mqttBroker[64];
+  char mqttUsername[33];
   char mqttPassword[33];
   bool provisioned;
   uint8_t checksum;
@@ -143,7 +147,7 @@ uint8_t calculateConfigChecksum(const EEPROMConfig& config) {
                  (int)config.frustumTopRadius + (int)config.frustumBottomRadius +
                  (int)config.frustumHeight + (int)config.sensorInterval +
                  strlen(config.wifiSSID) + strlen(config.wifiPassword) +
-                 strlen(config.mqttBroker) + strlen(config.mqttPassword) +
+                 strlen(config.mqttBroker) + strlen(config.mqttUsername) + strlen(config.mqttPassword) +
                  (config.provisioned ? 1 : 0)) & 0xFF;
 }
 
@@ -166,6 +170,8 @@ bool loadConfig() {
     savedPassword[64] = '\0';
     strncpy(savedMqttBroker, config.mqttBroker, 63);
     savedMqttBroker[63] = '\0';
+    strncpy(savedMqttUsername, config.mqttUsername, 32);
+    savedMqttUsername[32] = '\0';
     mqttPassword = String(config.mqttPassword);
 
     Serial.println("Loaded config from EEPROM");
@@ -190,6 +196,8 @@ void saveConfig() {
   config.wifiPassword[64] = '\0';
   strncpy(config.mqttBroker, savedMqttBroker, 63);
   config.mqttBroker[63] = '\0';
+  strncpy(config.mqttUsername, savedMqttUsername, 32);
+  config.mqttUsername[32] = '\0';
   strncpy(config.mqttPassword, mqttPassword.c_str(), 32);
   config.mqttPassword[32] = '\0';
   config.provisioned = savedSSID[0] != '\0' && mqttPassword.length() > 0;
@@ -211,7 +219,7 @@ unsigned long elapsedSince(unsigned long since) {
 }
 
 // ============================================================
-//  WiFi
+//  WiFi & MQTT
 // ============================================================
 
 void setupMQTTTopics() {
@@ -235,15 +243,19 @@ void startProvisioningMode() {
 
   WiFiManagerParameter customDeviceId("deviceId", "Device ID", deviceChipId.c_str(), 20);
   WiFiManagerParameter customDeviceName("deviceName", "Device Name", "Floyd Feeder", 32);
+  WiFiManagerParameter customMqttBroker("mqttBroker", "MQTT Broker", savedMqttBroker, 64);
+  WiFiManagerParameter customMqttUsername("mqttUsername", "MQTT Username", savedMqttUsername, 32);
   WiFiManagerParameter customMqttPassword("mqttPassword", "MQTT Password", mqttPassword.c_str(), 32);
 
   wifiManager.setCustomHeadElement(
     "<style>body{font-family:system-ui,sans-serif;}button{background:#2e7d32!important;}</style>"
     "<p><strong>Floyd Fish Feeder Setup</strong></p>"
-    "<p>Save the device ID and MQTT password shown below. The app uses them to claim this feeder.</p>"
+    "<p>Save the device ID and MQTT credentials shown below. The app uses them to claim this feeder.</p>"
   );
   wifiManager.addParameter(&customDeviceId);
   wifiManager.addParameter(&customDeviceName);
+  wifiManager.addParameter(&customMqttBroker);
+  wifiManager.addParameter(&customMqttUsername);
   wifiManager.addParameter(&customMqttPassword);
   wifiManager.setConfigPortalTimeout(180);
   wifiManager.setConnectTimeout(30);
@@ -261,8 +273,10 @@ void startProvisioningMode() {
   savedSSID[32] = '\0';
   strncpy(savedPassword, WiFi.psk().c_str(), 64);
   savedPassword[64] = '\0';
-  strncpy(savedMqttBroker, "broker.hivemq.com", 63);
+  strncpy(savedMqttBroker, customMqttBroker.getValue(), 63);
   savedMqttBroker[63] = '\0';
+  strncpy(savedMqttUsername, customMqttUsername.getValue(), 32);
+  savedMqttUsername[32] = '\0';
   mqttPassword = String(customMqttPassword.getValue());
 
   saveConfig();
@@ -271,14 +285,54 @@ void startProvisioningMode() {
   ESP.restart();
 }
 
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  String message;
+  message.reserve(length);
+  for (unsigned int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+
+  if (String(topic) == topicCommand) {
+    pendingCommandPayload = message;
+    pendingCommand = true;
+  }
+}
+
+void connectMQTT() {
+  if (mqttClient.connected()) return;
+
+  wifiClient.setInsecure();
+
+  String willPayload = R"({"type":"status","data":{"connected":false}})";
+
+  const char* user = (savedMqttUsername[0] != '\0') ? savedMqttUsername : nullptr;
+
+  bool connected = mqttClient.connect(
+    mqttClientId.c_str(),
+    user,
+    mqttPassword.c_str(),
+    topicStatus.c_str(),
+    0,
+    true,
+    willPayload.c_str()
+  );
+
+  if (connected) {
+    Serial.println("MQTT connected. Subscribing to command topic...");
+    mqttClient.subscribe(topicCommand.c_str());
+    sendDeviceStatus(0);
+  } else {
+    Serial.print("MQTT connection failed, rc=");
+    Serial.println(mqttClient.state());
+  }
+}
+
 void configureMQTTClient() {
   mqttClientId = "floyd-" + deviceChipId;
-  mqttClient.setWifiCredentials(savedSSID, savedPassword);
-  mqttClient.setMqttServer(savedMqttBroker, "", "", 1883);
-  mqttClient.setMqttClientName(mqttClientId.c_str());
+  mqttClient.setServer(savedMqttBroker, 8883);
+  mqttClient.setCallback(mqttCallback);
   mqttClient.setKeepAlive(30);
-  mqttClient.enableMQTTPersistence();
-  mqttClient.enableLastWillMessage(topicStatus.c_str(), R"({"type":"status","data":{"connected":false}})", true);
+  mqttClient.setBufferSize(1024);
 }
 
 void connectToWiFi() {
@@ -322,10 +376,9 @@ void checkWiFiConnection() {
         Serial.println("Reconnect attempt: " + String(wifiReconnectAttempts));
 
         WiFi.disconnect();
-        delay(1000);
+        delay(100);
         ESP.wdtFeed();
-
-        connectToWiFi();
+        WiFi.begin(savedSSID, savedPassword);
       } else {
         Serial.println("Max WiFi reconnection attempts reached. Restarting ESP8266...");
         ESP.restart();
@@ -333,6 +386,17 @@ void checkWiFiConnection() {
     } else {
       wifiReconnectAttempts = 0;
     }
+  }
+}
+
+void checkMQTTConnection() {
+  static unsigned long lastMqttCheck = 0;
+  if (millis() - lastMqttCheck < 5000) return;
+  lastMqttCheck = millis();
+
+  if (WiFi.status() == WL_CONNECTED && !mqttClient.connected()) {
+    Serial.println("MQTT disconnected. Reconnecting...");
+    connectMQTT();
   }
 }
 
@@ -663,8 +727,8 @@ void broadcastSensorData() {
 
   String output;
   serializeJson(doc, output);
-  if (mqttClient.isConnected()) {
-    mqttClient.publish(topicTelemetry, output);
+  if (mqttClient.connected()) {
+    mqttClient.publish(topicTelemetry.c_str(), output.c_str());
   }
 }
 
@@ -746,8 +810,8 @@ void sendDeviceStatus(uint8_t num) {
 
   String output;
   serializeJson(doc, output);
-  if (mqttClient.isConnected()) {
-    mqttClient.publish(topicStatus, output, true);
+  if (mqttClient.connected()) {
+    mqttClient.publish(topicStatus.c_str(), output.c_str(), true);
   }
 }
 
@@ -908,18 +972,6 @@ void handleMQTTMessage(String message) {
   }
 }
 
-void onConnectionEstablished() {
-  Serial.println("MQTT connected. Subscribing to command topic...");
-
-  mqttClient.subscribe(topicCommand, [](const String &topic, const String &payload) {
-    (void)topic;
-    pendingCommandPayload = payload;
-    pendingCommand = true;
-  });
-
-  sendDeviceStatus(0);
-}
-
 // ============================================================
 //  Setup & Loop
 // ============================================================
@@ -980,7 +1032,9 @@ void setup() {
     startProvisioningMode();
   }
 
+  connectToWiFi();
   configureMQTTClient();
+  connectMQTT();
 
   Serial.println("Setup complete! Ready for MQTT.");
   Serial.println("Device ID: " + deviceChipId);
@@ -992,7 +1046,8 @@ void setup() {
 void loop() {
   ESP.wdtFeed();
 
-  // EspMQTTClient manages WiFi and MQTT reconnects from its loop.
+  checkWiFiConnection();
+  checkMQTTConnection();
   mqttClient.loop();
 
   if (pendingCommand) {
@@ -1001,8 +1056,8 @@ void loop() {
     pendingCommandPayload = "";
   }
 
-  if (pendingResponse.length() > 0 && mqttClient.isConnected()) {
-    mqttClient.publish(topicResponse, pendingResponse);
+  if (pendingResponse.length() > 0 && mqttClient.connected()) {
+    mqttClient.publish(topicResponse.c_str(), pendingResponse.c_str());
     pendingResponse = "";
   }
 

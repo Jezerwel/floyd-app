@@ -1,6 +1,9 @@
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import DateTimePicker, {
+  type DateTimePickerEvent,
+} from "@react-native-community/datetimepicker";
 import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
@@ -19,6 +22,30 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+function timeStringToDate(time: string): Date {
+  const [hours, minutes] = time.split(":").map(Number);
+  const date = new Date();
+  date.setHours(hours || 8);
+  date.setMinutes(minutes || 0);
+  date.setSeconds(0);
+  return date;
+}
+
+function dateToTimeString(date: Date): string {
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  return `${hours}:${minutes}`;
+}
+
+function formatTimeDisplay(time: string): string {
+  if (!time) return "Tap to select time";
+  const [hours, minutes] = time.split(":").map(Number);
+  const date = new Date();
+  date.setHours(hours);
+  date.setMinutes(minutes);
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 const CLOUD_SERVER = "https://floyd-feeder.up.railway.app";
 
 interface Schedule {
@@ -29,7 +56,7 @@ interface Schedule {
   enabled: boolean;
 }
 
-const DAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
+const DAY_LABELS = ["S", "M", "T", "W", "Th", "F", "S"];
 
 async function fetchSchedules(): Promise<Schedule[]> {
   const res = await fetch(`${CLOUD_SERVER}/api/schedules`);
@@ -57,7 +84,7 @@ async function updateSchedule(
     time: string;
     days: boolean[];
     enabled: boolean;
-  }
+  },
 ): Promise<Schedule> {
   const res = await fetch(`${CLOUD_SERVER}/api/schedules/${id}`, {
     method: "PUT",
@@ -79,7 +106,7 @@ export default function ScheduleScreen() {
 
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const [_loading, _setLoading] = useState(false);
+  const [_loading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formLabel, setFormLabel] = useState("");
@@ -95,6 +122,8 @@ export default function ScheduleScreen() {
   ]);
   const [formEnabled, setFormEnabled] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [pickerDate, setPickerDate] = useState(new Date());
 
   const loadSchedules = useCallback(async () => {
     try {
@@ -117,6 +146,10 @@ export default function ScheduleScreen() {
     setFormTime("");
     setFormDays([false, false, false, false, false, false, false]);
     setFormEnabled(true);
+    setShowTimePicker(false);
+    const defaultDate = new Date();
+    defaultDate.setHours(8, 0, 0, 0);
+    setPickerDate(defaultDate);
   }, []);
 
   const openAddModal = useCallback(() => {
@@ -128,8 +161,10 @@ export default function ScheduleScreen() {
     setEditingId(schedule._id);
     setFormLabel(schedule.label);
     setFormTime(schedule.time);
+    setPickerDate(timeStringToDate(schedule.time));
     setFormDays([...schedule.days]);
     setFormEnabled(schedule.enabled);
+    setShowTimePicker(false);
     setShowModal(true);
   }, []);
 
@@ -146,8 +181,8 @@ export default function ScheduleScreen() {
       Alert.alert("Validation", "Please enter a label.");
       return;
     }
-    if (!/^\d{2}:\d{2}$/.test(formTime)) {
-      Alert.alert("Validation", "Please enter a valid time in HH:MM format.");
+    if (!formTime) {
+      Alert.alert("Validation", "Please select a time.");
       return;
     }
     if (!formDays.some((d) => d)) {
@@ -167,7 +202,7 @@ export default function ScheduleScreen() {
       if (editingId) {
         const updated = await updateSchedule(editingId, payload);
         setSchedules((prev) =>
-          prev.map((s) => (s._id === editingId ? updated : s))
+          prev.map((s) => (s._id === editingId ? updated : s)),
         );
       } else {
         const created = await createSchedule(payload);
@@ -182,31 +217,28 @@ export default function ScheduleScreen() {
     }
   }, [formLabel, formTime, formDays, formEnabled, editingId, resetForm]);
 
-  const handleToggleEnabled = useCallback(
-    async (schedule: Schedule) => {
-      const newEnabled = !schedule.enabled;
+  const handleToggleEnabled = useCallback(async (schedule: Schedule) => {
+    const newEnabled = !schedule.enabled;
+    setSchedules((prev) =>
+      prev.map((s) =>
+        s._id === schedule._id ? { ...s, enabled: newEnabled } : s,
+      ),
+    );
+    try {
+      await updateSchedule(schedule._id, {
+        label: schedule.label,
+        time: schedule.time,
+        days: schedule.days,
+        enabled: newEnabled,
+      });
+    } catch {
       setSchedules((prev) =>
         prev.map((s) =>
-          s._id === schedule._id ? { ...s, enabled: newEnabled } : s
-        )
+          s._id === schedule._id ? { ...s, enabled: schedule.enabled } : s,
+        ),
       );
-      try {
-        await updateSchedule(schedule._id, {
-          label: schedule.label,
-          time: schedule.time,
-          days: schedule.days,
-          enabled: newEnabled,
-        });
-      } catch {
-        setSchedules((prev) =>
-          prev.map((s) =>
-            s._id === schedule._id ? { ...s, enabled: schedule.enabled } : s
-          )
-        );
-      }
-    },
-    []
-  );
+    }
+  }, []);
 
   const handleDelete = useCallback((schedule: Schedule) => {
     Alert.alert(
@@ -220,13 +252,15 @@ export default function ScheduleScreen() {
           onPress: async () => {
             try {
               await deleteSchedule(schedule._id);
-              setSchedules((prev) => prev.filter((s) => s._id !== schedule._id));
+              setSchedules((prev) =>
+                prev.filter((s) => s._id !== schedule._id),
+              );
             } catch {
               Alert.alert("Error", "Failed to delete schedule.");
             }
           },
         },
-      ]
+      ],
     );
   }, []);
 
@@ -250,7 +284,7 @@ export default function ScheduleScreen() {
               {item.label}
             </Text>
             <Text style={[styles.scheduleTime, { color: colors.primary }]}>
-              {item.time}
+              {formatTimeDisplay(item.time)}
             </Text>
           </View>
           <Switch
@@ -287,7 +321,7 @@ export default function ScheduleScreen() {
         </View>
       </Pressable>
     ),
-    [colors, handleDelete, handleToggleEnabled, openEditModal]
+    [colors, handleDelete, handleToggleEnabled, openEditModal],
   );
 
   return (
@@ -350,7 +384,10 @@ export default function ScheduleScreen() {
         onRequestClose={() => setShowModal(false)}
       >
         <SafeAreaView
-          style={[styles.modalContainer, { backgroundColor: colors.background }]}
+          style={[
+            styles.modalContainer,
+            { backgroundColor: colors.background },
+          ]}
         >
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setShowModal(false)}>
@@ -369,7 +406,9 @@ export default function ScheduleScreen() {
           </View>
 
           <View style={styles.modalBody}>
-            <Text style={[styles.fieldLabel, { color: colors.text }]}>Label</Text>
+            <Text style={[styles.fieldLabel, { color: colors.text }]}>
+              Label
+            </Text>
             <TextInput
               style={[
                 styles.input,
@@ -386,26 +425,74 @@ export default function ScheduleScreen() {
               autoFocus
             />
 
-            <Text style={[styles.fieldLabel, { color: colors.text }]}>Time</Text>
-            <TextInput
+            <Text style={[styles.fieldLabel, { color: colors.text }]}>
+              Time
+            </Text>
+            <TouchableOpacity
+              onPress={() => {
+                if (!formTime) {
+                  const defaultDate = new Date();
+                  defaultDate.setHours(8, 0, 0, 0);
+                  setPickerDate(defaultDate);
+                }
+                setShowTimePicker((prev) => !prev);
+              }}
               style={[
                 styles.input,
                 {
                   backgroundColor: colors.card,
                   borderColor: colors.border,
-                  color: colors.text,
+                  justifyContent: "center",
                 },
               ]}
-              placeholder="HH:MM (e.g. 08:30)"
-              placeholderTextColor={colors.muted}
-              value={formTime}
-              onChangeText={setFormTime}
-              keyboardType="numbers-and-punctuation"
-              maxLength={5}
-            />
+              activeOpacity={0.8}
+            >
+              <Text
+                style={{
+                  color: formTime ? colors.text : colors.muted,
+                  fontSize: 16,
+                }}
+              >
+                {formatTimeDisplay(formTime)}
+              </Text>
+            </TouchableOpacity>
+            {showTimePicker &&
+              pickerDate instanceof Date &&
+              Platform.OS === "ios" && (
+                <DateTimePicker
+                  value={pickerDate}
+                  mode="time"
+                  display="spinner"
+                  onChange={(_event: DateTimePickerEvent, date?: Date) => {
+                    if (date) {
+                      setPickerDate(date);
+                      setFormTime(dateToTimeString(date));
+                    }
+                  }}
+                />
+              )}
+            {showTimePicker &&
+              pickerDate instanceof Date &&
+              Platform.OS !== "ios" && (
+                <DateTimePicker
+                  value={pickerDate}
+                  mode="time"
+                  display="default"
+                  onChange={(_event: DateTimePickerEvent, date?: Date) => {
+                    if (date) {
+                      setPickerDate(date);
+                      setFormTime(dateToTimeString(date));
+                      setShowTimePicker(false);
+                    }
+                  }}
+                  onDismiss={() => {
+                    setShowTimePicker(false);
+                  }}
+                />
+              )}
 
             <Text style={[styles.fieldLabel, { color: colors.text }]}>
-              Days of Week
+              Days of the Week
             </Text>
             <View style={styles.daysToggleRow}>
               {DAY_LABELS.map((day, i) => (
@@ -418,9 +505,7 @@ export default function ScheduleScreen() {
                       backgroundColor: formDays[i]
                         ? colors.primary
                         : colors.card,
-                      borderColor: formDays[i]
-                        ? colors.primary
-                        : colors.border,
+                      borderColor: formDays[i] ? colors.primary : colors.border,
                     },
                   ]}
                 >

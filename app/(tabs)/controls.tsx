@@ -92,16 +92,14 @@ export default function ControlsScreen() {
   const [augerSpeed, setAugerSpeed] = useState(75);
   const [impellerSpeed, setImpellerSpeed] = useState(100);
   const [feedDuration, setFeedDuration] = useState(3);
-  const [preSpinMs, setPreSpinMs] = useState(1.5);
-  const [postSpinMs, setPostSpinMs] = useState(1.5);
 
   const isFeeding = deviceData.motorState !== "idle";
 
   const motorStateLabel: Record<string, string> = {
-    pre_spin: "Pre-Spinning...",
+    pre_spin: "Getting ready...",
     feeding: "Feeding...",
-    post_spin: "Post-Spinning...",
-    jam_clear: "Clearing Jam...",
+    post_spin: "Finishing up...",
+    jam_clear: "Unclogging...",
   };
 
   const handleFeed = () => {
@@ -111,17 +109,17 @@ export default function ControlsScreen() {
     }
     if (esp8266Status !== "connected") {
       Alert.alert(
-        "ESP8266 Not Available",
-        "Connected to cloud, but ESP8266 hardware is offline."
+        "Feeder Not Available",
+        "Connected to cloud, but the feeder is offline."
       );
       return;
     }
     startFeed({
       augerSpeed: Math.round(augerSpeed * 10.23),
       impellerSpeed: Math.round(impellerSpeed * 10.23),
-      preSpinMs: Math.round(preSpinMs * 1000),
+      preSpinMs: 1500,
       feedMs: Math.round(feedDuration * 1000),
-      postSpinMs: Math.round(postSpinMs * 1000),
+      postSpinMs: 1500,
     });
   };
 
@@ -135,8 +133,8 @@ export default function ControlsScreen() {
       return;
     }
     Alert.alert(
-      "Clear Jam",
-      "Run the jam-clear sequence? The auger will reverse briefly.",
+      "Clear Blockage",
+      "Run the unclog sequence? The feed motor will reverse briefly.",
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -193,7 +191,7 @@ export default function ControlsScreen() {
               color={colors.warning}
             />
             <Text style={[styles.bannerText, { color: colors.warning }]}>
-              ESP8266 hardware offline — check device power & WiFi
+              Feeder is offline — check power & WiFi
             </Text>
           </View>
         )}
@@ -216,13 +214,10 @@ export default function ControlsScreen() {
           </View>
         )}
 
-        <StatCard title="Auger Speed" icon="gear" color={colors.primary}>
+        <StatCard title="Feed Speed" icon="gear" color={colors.primary}>
           <View style={styles.sliderRow}>
             <Text style={[styles.sliderLabel, { color: colors.text }]}>
               {augerSpeed}%
-            </Text>
-            <Text style={[styles.sliderRaw, { color: colors.muted }]}>
-              ({Math.round(augerSpeed * 10.23)} / 1023)
             </Text>
           </View>
           <PctSlider
@@ -232,13 +227,10 @@ export default function ControlsScreen() {
           />
         </StatCard>
 
-        <StatCard title="Impeller Speed" icon="fan" color={colors.secondary}>
+        <StatCard title="Spread Speed" icon="fan" color={colors.secondary}>
           <View style={styles.sliderRow}>
             <Text style={[styles.sliderLabel, { color: colors.text }]}>
               {impellerSpeed}%
-            </Text>
-            <Text style={[styles.sliderRaw, { color: colors.muted }]}>
-              ({Math.round(impellerSpeed * 10.23)} / 1023)
             </Text>
           </View>
           <PctSlider
@@ -278,57 +270,7 @@ export default function ControlsScreen() {
           </View>
         </StatCard>
 
-        <StatCard title="Pre-Spin" icon="arrow.up" color={colors.secondary}>
-          <View style={styles.inputRow}>
-            <TextInput
-              style={[
-                styles.numberInput,
-                {
-                  color: colors.text,
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                },
-              ]}
-              value={String(preSpinMs)}
-              onChangeText={(t) => {
-                const n = Number(t);
-                if (!isNaN(n) && n >= 0 && n <= 10) setPreSpinMs(n);
-              }}
-              keyboardType="decimal-pad"
-              selectTextOnFocus
-              maxLength={4}
-            />
-            <Text style={[styles.inputUnit, { color: colors.muted }]}>
-              seconds
-            </Text>
-          </View>
-        </StatCard>
 
-        <StatCard title="Post-Spin" icon="arrow.down" color={colors.secondary}>
-          <View style={styles.inputRow}>
-            <TextInput
-              style={[
-                styles.numberInput,
-                {
-                  color: colors.text,
-                  backgroundColor: colors.card,
-                  borderColor: colors.border,
-                },
-              ]}
-              value={String(postSpinMs)}
-              onChangeText={(t) => {
-                const n = Number(t);
-                if (!isNaN(n) && n >= 0 && n <= 10) setPostSpinMs(n);
-              }}
-              keyboardType="decimal-pad"
-              selectTextOnFocus
-              maxLength={4}
-            />
-            <Text style={[styles.inputUnit, { color: colors.muted }]}>
-              seconds
-            </Text>
-          </View>
-        </StatCard>
 
         <TouchableOpacity
           style={[

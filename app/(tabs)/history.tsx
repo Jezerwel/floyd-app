@@ -7,7 +7,6 @@ import { useESP8266 } from "@/hooks/useESP8266Context";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useState } from "react";
 import {
-  FlatList,
   ScrollView,
   StyleSheet,
   Text,
@@ -131,6 +130,7 @@ export default function LogsScreen() {
 
   const renderSensorLogItem = ({ item }: { item: SensorLogEntry }) => (
     <View
+      key={item.id}
       style={[
         styles.logItem,
         { backgroundColor: colors.card, borderColor: colors.border },
@@ -192,6 +192,7 @@ export default function LogsScreen() {
 
   const renderAlertItem = ({ item }: { item: any }) => (
     <View
+      key={item.id}
       style={[
         styles.alertLogItem,
         {
@@ -335,13 +336,9 @@ export default function LogsScreen() {
             color={colors.primary}
           >
             {sensorLogs.length > 0 ? (
-              <FlatList
-                data={sensorLogs}
-                renderItem={renderSensorLogItem}
-                keyExtractor={(item) => item.id}
-                style={styles.logList}
-                scrollEnabled={false}
-              />
+              <View style={styles.logList}>
+                {sensorLogs.map((item) => renderSensorLogItem({ item }))}
+              </View>
             ) : (
               <View style={styles.emptyState}>
                 <IconSymbol name="circle" size={32} color={colors.muted} />
@@ -364,13 +361,9 @@ export default function LogsScreen() {
             color={colors.secondary}
           >
             {alerts.length > 0 ? (
-              <FlatList
-                data={alerts}
-                renderItem={renderAlertItem}
-                keyExtractor={(item) => item.id}
-                style={styles.logList}
-                scrollEnabled={false}
-              />
+              <View style={styles.logList}>
+                {alerts.map((item) => renderAlertItem({ item }))}
+              </View>
             ) : (
               <View style={styles.emptyState}>
                 <IconSymbol

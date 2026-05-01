@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { Animated, StyleSheet, Text, TouchableOpacity } from "react-native";
 import { IconSymbol } from "./IconSymbol";
 import { Colors } from "@/constants/Colors";
@@ -22,6 +22,15 @@ export function ErrorToast({
   const opacity = useRef(new Animated.Value(0)).current;
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  const dismiss = useCallback(() => {
+    Animated.parallel([
+      Animated.timing(translateY, { toValue: -100, duration: 250, useNativeDriver: true }),
+      Animated.timing(opacity, { toValue: 0, duration: 250, useNativeDriver: true }),
+    ]).start(() => {
+      onDismiss();
+    });
+  }, [onDismiss, translateY, opacity]);
+
   useEffect(() => {
     if (visible) {
       Animated.parallel([
@@ -41,16 +50,7 @@ export function ErrorToast({
         clearTimeout(timerRef.current);
       }
     };
-  }, [visible, message]);
-
-  const dismiss = () => {
-    Animated.parallel([
-      Animated.timing(translateY, { toValue: -100, duration: 250, useNativeDriver: true }),
-      Animated.timing(opacity, { toValue: 0, duration: 250, useNativeDriver: true }),
-    ]).start(() => {
-      onDismiss();
-    });
-  };
+  }, [visible, message, dismiss, duration, translateY, opacity]);
 
   if (!visible) return null;
 

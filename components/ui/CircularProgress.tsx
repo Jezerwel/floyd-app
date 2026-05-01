@@ -8,12 +8,12 @@ interface CircularProgressProps {
   color: string;
 }
 
-export const CircularProgress: React.FC<CircularProgressProps> = React.memo(({
+export const CircularProgress: React.FC<CircularProgressProps> = React.memo(function CircularProgress({
   percentage,
   size = 120,
   strokeWidth = 8,
   color,
-}) => {
+}) {
   const animatedPercentage = useRef(new Animated.Value(0)).current;
   const scaleValue = useRef(new Animated.Value(1)).current;
   const [displayValue, setDisplayValue] = React.useState(0);
