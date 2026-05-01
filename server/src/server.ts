@@ -1,201 +1,35 @@
 /**
- * Floyd Fish Feeder Express Proxy Server
- * TypeScript Express server with WebSocket proxy support
- * Bridges React Native app and ESP8266 hardware via MQTT or direct connection
+ * Floyd Fish Feeder API Server
+ * Express REST API with MQTT broker integration for cloud device control.
  */
 
 import cors from "cors";
 import express from "express";
-import { createServer } from "http";
-import WebSocket from "ws";
-import { ESP8266Client } from "./services/esp8266Client";
-import { MQTTBridge } from "./services/mqttBridge";
-import { DEFAULT_SERVER_CONFIG, ServerConfig, DeviceCommand, isValidCommand } from "./types";
-import { WebSocketProxyHandler } from "./websocket/proxyHandlers";
-import { v4 as uuidv4 } from "uuid";
+import type { Request, Response, NextFunction } from "express";
+import type { Server as HttpServer } from "http";
+import prisma from "./services/db";
+import mqttHandler from "./services/mqttClient";
+import FeedScheduler from "./services/scheduler";
+import { DEFAULT_SERVER_CONFIG, MQTT_CONFIG, ServerConfig } from "./types";
 
-interface MQTTClientInfo {
-  id: string;
-  socket: WebSocket;
-  deviceId: string;
-  connectedAt: number;
-}
-
-class FloydFeederProxyServer {
-  private app: express.Application;
-  private server: ReturnType<typeof createServer>;
-  private wss?: WebSocket.Server;
-  private config: ServerConfig;
-
-  // Services
-  private esp8266Client: ESP8266Client;
-  private wsProxyHandler: WebSocketProxyHandler;
-  private mqttBridge?: MQTTBridge;
-
-  // MQTT mode clients
-  private mqttClients: Map<string, MQTTClientInfo> = new Map();
-  private lastMQTTData: Map<string, Record<string, unknown>> = new Map();
+class FloydFeederServer {
+  private readonly app: express.Application;
+  private server?: HttpServer;
+  private readonly config: ServerConfig;
+  private readonly scheduler: FeedScheduler;
+  private readonly startTime: number = Date.now();
 
   constructor(config: Partial<ServerConfig> = {}) {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
-
-    // Initialize ESP8266 client (for direct connection mode)
-    this.esp8266Client = new ESP8266Client(this.config.esp8266Config);
-    this.wsProxyHandler = new WebSocketProxyHandler(this.esp8266Client);
-
-    // Initialize MQTT bridge if enabled
-    if (this.config.useMqtt && this.config.mqttConfig) {
-      this.mqttBridge = new MQTTBridge(this.config.mqttConfig);
-      this.setupMQTTListeners();
-    }
-
-    // Setup Express application
+    this.scheduler = new FeedScheduler();
     this.app = express();
     this.setupExpress();
 
-    // Create HTTP server
-    this.server = createServer(this.app);
-
-    console.log("🚀 Floyd Feeder Proxy Server initialized");
-    console.log(`⚙️  Mode: ${this.config.useMqtt ? "MQTT" : "Direct ESP8266"}`);
-    console.log("⚙️  Configuration:", JSON.stringify(this.config, null, 2));
+    console.log("Floyd Feeder API Server initialized");
+    console.log("Configuration:", JSON.stringify(this.config, null, 2));
   }
 
-  private setupMQTTListeners(): void {
-    if (!this.mqttBridge) return;
-
-    this.mqttBridge.on("message", (message) => {
-      this.lastMQTTData.set(message.deviceId, message.data);
-      this.broadcastMQTTMessage(message.deviceId, {
-        type: message.type === "sensors" ? "sensor_data" : message.type === "response" ? "control_response" : "status",
-        data: message.data,
-        timestamp: message.timestamp,
-      });
-    });
-
-    this.mqttBridge.on("connected", () => {
-      console.log("✅ MQTT Bridge connected");
-      this.broadcastMQTTStatus("MQTT connected");
-    });
-
-    this.mqttBridge.on("disconnected", () => {
-      console.log("📴 MQTT Bridge disconnected");
-      this.broadcastMQTTStatus("MQTT disconnected");
-    });
-
-    this.mqttBridge.on("error", (error: Error) => {
-      console.error("❌ MQTT Bridge error:", error.message);
-    });
-  }
-
-  private broadcastMQTTMessage(deviceId: string, message: Record<string, unknown>): void {
-    const messageStr = JSON.stringify(message);
-    this.mqttClients.forEach((client) => {
-      if (client.deviceId === deviceId && client.socket.readyState === WebSocket.OPEN) {
-        client.socket.send(messageStr);
-      }
-    });
-  }
-
-  private broadcastMQTTStatus(status: string): void {
-    const message = JSON.stringify({
-      type: "status",
-      data: { message: status, mqttConnected: this.mqttBridge?.getStatus().isConnected },
-      timestamp: Date.now(),
-    });
-    this.mqttClients.forEach((client) => {
-      if (client.socket.readyState === WebSocket.OPEN) {
-        client.socket.send(message);
-      }
-    });
-  }
-
-  private handleMQTTClientConnection(socket: WebSocket, request: Request & { socket: { remoteAddress: string } }): string {
-    const clientId = uuidv4();
-    const deviceId = "default";
-
-    const clientInfo: MQTTClientInfo = {
-      id: clientId,
-      socket,
-      deviceId,
-      connectedAt: Date.now(),
-    };
-
-    this.mqttClients.set(clientId, clientInfo);
-    console.log(`📱 MQTT mode client connected: ${clientId}`);
-
-    // Send last known data
-    const lastData = this.lastMQTTData.get(deviceId);
-    if (lastData) {
-      socket.send(JSON.stringify({ type: "sensor_data", data: lastData, timestamp: Date.now() }));
-    }
-
-    // Send MQTT status
-    socket.send(JSON.stringify({
-      type: "status",
-      data: {
-        mqttConnected: this.mqttBridge?.getStatus().isConnected,
-        esp8266Connected: true,
-        proxyServerConnected: true,
-      },
-      timestamp: Date.now(),
-    }));
-
-    socket.on("message", (data: WebSocket.Data) => {
-      this.handleMQTTClientMessage(clientId, data);
-    });
-
-    socket.on("close", () => {
-      this.mqttClients.delete(clientId);
-      console.log(`📱 MQTT mode client disconnected: ${clientId}`);
-    });
-
-    return clientId;
-  }
-
-  private handleMQTTClientMessage(clientId: string, data: WebSocket.Data): void {
-    const client = this.mqttClients.get(clientId);
-    if (!client || !this.mqttBridge) return;
-
-    try {
-      const command = JSON.parse(data.toString());
-
-      if (command.action === "ping") {
-        client.socket.send(JSON.stringify({
-          type: "status",
-          data: { pong: true },
-          timestamp: Date.now(),
-        }));
-        return;
-      }
-
-      if (command.action === "set_device") {
-        client.deviceId = command.parameters?.deviceId || "default";
-        console.log(`📱 Client ${clientId} set device to: ${client.deviceId}`);
-        return;
-      }
-
-      if (!isValidCommand(command)) {
-        client.socket.send(JSON.stringify({
-          type: "error",
-          data: { message: "Invalid command format" },
-          timestamp: Date.now(),
-        }));
-        return;
-      }
-
-      console.log(`📨 MQTT command from ${clientId}: ${command.action}`);
-      this.mqttBridge.sendCommand(client.deviceId, command as DeviceCommand);
-    } catch (error) {
-      console.error(`❌ Failed to parse message from MQTT client ${clientId}:`, error);
-    }
-  }
-
-  /**
-   * Setup Express middleware and routes
-   */
   private setupExpress(): void {
-    // CORS middleware
     this.app.use(
       cors({
         origin: [
@@ -207,355 +41,257 @@ class FloydFeederProxyServer {
       })
     );
 
-    // JSON parsing middleware
     this.app.use(express.json());
 
-    // Health check endpoint
-    this.app.get("/health", (req, res) => {
-      const esp8266Status = this.esp8266Client.getStatus();
-      const mqttStatus = this.mqttBridge?.getStatus();
+    const asyncHandler = (fn: (req: Request, res: Response) => Promise<void>) =>
+      (req: Request, res: Response) => {
+        fn(req, res).catch((err: Error) => {
+          console.error(err);
+          res.status(500).json({ success: false, error: "Internal server error" });
+        });
+      };
 
+    this.app.get("/health", (_req: Request, res: Response) => {
       res.json({
         status: "healthy",
         timestamp: new Date().toISOString(),
-        mode: this.config.useMqtt ? "mqtt" : "direct",
-        proxyServer: {
+        mode: "mqtt",
+        server: {
           uptime: Date.now() - this.startTime,
-          connectedClients: this.config.useMqtt
-            ? this.mqttClients.size
-            : this.wsProxyHandler.getClientsInfo().length,
         },
-        mqtt: this.config.useMqtt
-          ? {
-              connected: mqttStatus?.isConnected,
-              subscribedDevices: mqttStatus?.subscribedDevices,
-              messageCount: mqttStatus?.messageCount,
-            }
-          : null,
-        esp8266: !this.config.useMqtt
-          ? {
-              connected: esp8266Status.isConnected,
-              connecting: esp8266Status.isConnecting,
-              reconnectAttempts: esp8266Status.reconnectAttempts,
-              host: esp8266Status.config.host,
-              port: esp8266Status.config.port,
-            }
-          : null,
+        mqtt: {
+          brokerUrl: MQTT_CONFIG.brokerUrl,
+        },
       });
     });
 
-    // Proxy server statistics endpoint
-    this.app.get("/stats", (req, res) => {
-      const stats = this.wsProxyHandler.getStats();
+    this.app.get("/stats", (_req: Request, res: Response) => {
       res.json({
-        proxyServer: {
+        server: {
           uptime: Date.now() - this.startTime,
           startTime: this.startTime,
           config: this.config,
         },
-        websocket: stats,
+        mqtt: {
+          brokerUrl: MQTT_CONFIG.brokerUrl,
+        },
       });
     });
 
-    // ESP8266 management endpoints
-    this.app.post("/api/esp8266/connect", (req, res) => {
-      this.esp8266Client.connect();
+    this.app.get("/api/config", (_req: Request, res: Response) => {
       res.json({
-        success: true,
-        message: "ESP8266 connection initiated",
+        server: this.config,
+        mqtt: MQTT_CONFIG,
       });
     });
 
-    this.app.post("/api/esp8266/disconnect", (req, res) => {
-      this.esp8266Client.disconnect();
-      res.json({
-        success: true,
-        message: "ESP8266 disconnected",
-      });
-    });
+    this.app.post("/api/devices/claim", asyncHandler(async (req, res) => {
+      const { deviceId, deviceName, mqttPassword } = req.body;
 
-    this.app.post("/api/esp8266/reconnect", (req, res) => {
-      this.wsProxyHandler.forceESP8266Reconnect();
-      res.json({
-        success: true,
-        message: "ESP8266 reconnection initiated",
-      });
-    });
-
-    this.app.get("/api/esp8266/status", (req, res) => {
-      const status = this.esp8266Client.getStatus();
-      res.json(status);
-    });
-
-    this.app.put("/api/esp8266/config", (req, res) => {
-      const {
-        host,
-        port,
-        reconnectDelay,
-        maxReconnectAttempts,
-        connectionTimeout,
-      } = req.body;
-
-      try {
-        this.wsProxyHandler.updateESP8266Config({
-          host,
-          port,
-          reconnectDelay,
-          maxReconnectAttempts,
-          connectionTimeout,
-        });
-
-        res.json({
-          success: true,
-          message: "ESP8266 configuration updated",
-          config: this.esp8266Client.getStatus().config,
-        });
-      } catch (error) {
-        res.status(400).json({
-          success: false,
-          message: "Invalid configuration parameters",
-        });
-      }
-    });
-
-    // Proxy command endpoints (for testing direct ESP8266 commands)
-    this.app.post("/api/command", (req, res) => {
-      const { action, parameters } = req.body;
-
-      if (!action) {
-        res.status(400).json({
-          success: false,
-          message: "Missing action parameter",
-        });
+      if (!deviceId || !mqttPassword) {
+        res.status(400).json({ success: false, error: "deviceId and mqttPassword required" });
         return;
       }
 
-      const success = this.esp8266Client.sendCommand({ action, parameters });
-      res.json({
-        success,
-        message: success
-          ? `Command ${action} sent to ESP8266`
-          : "Failed to send command to ESP8266",
-      });
-    });
+      const existing = await prisma.device.findUnique({ where: { chipId: deviceId } });
+      const device = existing
+        ? await prisma.device.update({
+            where: { chipId: deviceId },
+            data: {
+              name: deviceName || existing.name,
+              mqttPassword,
+              claimedAt: new Date(),
+            },
+          })
+        : await prisma.device.create({
+            data: {
+              chipId: deviceId,
+              name: deviceName || "Floyd Feeder",
+              mqttPassword,
+            },
+          });
 
-    // Connected clients endpoint
-    this.app.get("/api/clients", (req, res) => {
-      const clients = this.wsProxyHandler.getClientsInfo();
-      res.json({
-        count: clients.length,
-        clients,
-      });
-    });
+      await mqttHandler.subscribeDevice(deviceId);
+      res.status(existing ? 200 : 201).json({ success: true, device });
+    }));
 
-    // Server configuration endpoint
-    this.app.get("/api/config", (req, res) => {
-      res.json({
-        server: this.config,
-        esp8266: this.esp8266Client.getStatus().config,
-      });
-    });
+    this.app.get("/api/devices", asyncHandler(async (_req, res) => {
+      const devices = await prisma.device.findMany({ orderBy: { claimedAt: "desc" } });
+      res.json({ success: true, devices });
+    }));
 
-    // 404 handler
-    this.app.use("*", (req, res) => {
+    this.app.get("/api/schedules", asyncHandler(async (_req, res) => {
+      const schedules = await prisma.feedSchedule.findMany({ orderBy: { createdAt: "asc" } });
+      res.json({ success: true, schedules });
+    }));
+
+    this.app.post("/api/schedules", asyncHandler(async (req, res) => {
+      const { label, time, daysOfWeek, augerSpeed, impellerSpeed, preSpinMs, feedMs, postSpinMs } = req.body;
+      const schedule = await prisma.feedSchedule.create({
+        data: {
+          label: label || "Feed",
+          time,
+          daysOfWeek: daysOfWeek || "0,1,2,3,4,5,6",
+          augerSpeed: augerSpeed || 768,
+          impellerSpeed: impellerSpeed || 1023,
+          preSpinMs: preSpinMs || 1500,
+          feedMs: feedMs || 3000,
+          postSpinMs: postSpinMs || 1500,
+          enabled: true,
+        },
+      });
+      this.scheduler.addJob(schedule);
+      res.status(201).json({ success: true, schedule });
+    }));
+
+    this.app.put("/api/schedules/:id", asyncHandler(async (req, res) => {
+      const { id } = req.params;
+      const data = req.body;
+      this.scheduler.removeJob(id);
+      const schedule = await prisma.feedSchedule.update({ where: { id }, data });
+      if (schedule.enabled) {
+        this.scheduler.addJob(schedule);
+      }
+      res.json({ success: true, schedule });
+    }));
+
+    this.app.delete("/api/schedules/:id", asyncHandler(async (req, res) => {
+      const { id } = req.params;
+      this.scheduler.removeJob(id);
+      await prisma.feedSchedule.delete({ where: { id } });
+      res.json({ success: true });
+    }));
+
+    this.app.get("/api/history", asyncHandler(async (req, res) => {
+      const limit = parseInt(req.query.limit as string, 10) || 50;
+      const logs = await prisma.feedLog.findMany({ orderBy: { timestamp: "desc" }, take: limit });
+      res.json({ success: true, logs });
+    }));
+
+    this.app.get("/api/alerts/config", asyncHandler(async (_req, res) => {
+      const config = await prisma.alertConfig.findUnique({ where: { id: "default" } });
+      res.json({
+        success: true,
+        config: config || { lowFoodPct: 30, criticalFoodPct: 10, tempMin: 20, tempMax: 32 },
+      });
+    }));
+
+    this.app.put("/api/alerts/config", asyncHandler(async (req, res) => {
+      const { lowFoodPct, criticalFoodPct, tempMin, tempMax } = req.body;
+      const config = await prisma.alertConfig.upsert({
+        where: { id: "default" },
+        update: { lowFoodPct, criticalFoodPct, tempMin, tempMax },
+        create: { id: "default", lowFoodPct, criticalFoodPct, tempMin, tempMax },
+      });
+      res.json({ success: true, config });
+    }));
+
+    this.app.use("*", (_req, res) => {
       res.status(404).json({
         error: "Endpoint not found",
-        message: "This Floyd Feeder proxy server endpoint does not exist",
+        message: "This Floyd Feeder API endpoint does not exist",
         availableEndpoints: [
           "GET /health",
           "GET /stats",
-          "GET /api/esp8266/status",
-          "GET /api/clients",
           "GET /api/config",
-          "POST /api/esp8266/connect",
-          "POST /api/esp8266/disconnect",
-          "POST /api/esp8266/reconnect",
-          "POST /api/command",
-          "PUT /api/esp8266/config",
-          "WebSocket: ws://localhost:" + this.config.port,
+          "GET /api/devices",
+          "POST /api/devices/claim",
+          "GET /api/schedules",
+          "POST /api/schedules",
+          "PUT /api/schedules/:id",
+          "DELETE /api/schedules/:id",
+          "GET /api/history",
+          "GET /api/alerts/config",
+          "PUT /api/alerts/config",
         ],
       });
     });
 
-    // Error handling middleware
-    this.app.use(
-      (
-        err: any,
-        req: express.Request,
-        res: express.Response,
-        next: express.NextFunction
-      ) => {
-        console.error("❌ Express error:", err);
-        res.status(500).json({
-          error: "Internal server error",
-          message: err.message || "An unexpected error occurred",
-        });
-      }
-    );
+    this.app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+      console.error("Express error:", err);
+      res.status(500).json({ error: "Internal server error", message: err.message || "An unexpected error occurred" });
+    });
   }
 
-  /**
-   * Setup WebSocket server
-   */
-  private setupWebSocket(): void {
-    this.wss = new WebSocket.Server({
-      server: this.server,
-      path: "/",
-    });
-
-    console.log("🔌 WebSocket proxy server created");
-
-    // Handle WebSocket connections from React Native apps
-    this.wss.on("connection", (socket: WebSocket, request) => {
-      if (this.config.useMqtt && this.mqttBridge) {
-        const clientId = this.handleMQTTClientConnection(socket, request as Request & { socket: { remoteAddress: string } });
-        console.log(`✅ MQTT mode WebSocket connection established: ${clientId}`);
-      } else {
-        const clientId = this.wsProxyHandler.handleConnection(socket, request);
-        console.log(`✅ Direct mode WebSocket connection established: ${clientId}`);
-      }
-    });
-
-    console.log(
-      `📡 WebSocket proxy server listening for React Native connections`
-    );
-  }
-
-  private startTime: number = Date.now();
-
-  /**
-   * Start the proxy server
-   */
   public async start(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        // Setup WebSocket before starting server
-        this.setupWebSocket();
+    try {
+      await mqttHandler.connect();
+      await mqttHandler.subscribeKnownDevices();
 
-        this.server.listen(this.config.port, () => {
-          console.log("🎯 ======================================");
-          console.log("🐟 Floyd Fish Feeder Proxy Server READY");
-          console.log("🎯 ======================================");
-          console.log(`🌐 HTTP Server: http://localhost:${this.config.port}`);
-          console.log(`🔌 WebSocket: ws://localhost:${this.config.port}`);
-          console.log(
-            `💡 Health Check: http://localhost:${this.config.port}/health`
-          );
-          console.log(
-            `📊 Statistics: http://localhost:${this.config.port}/stats`
-          );
-          console.log(
-            `🔧 ESP8266 Status: http://localhost:${this.config.port}/api/esp8266/status`
-          );
-          console.log(
-            `📱 Connect your React Native app to: ws://localhost:${this.config.port}`
-          );
-          if (this.config.useMqtt) {
-            console.log(
-              `🔌 MQTT Broker: ${this.config.mqttConfig?.brokerUrl}`
-            );
-          } else {
-            console.log(
-              `🔌 ESP8266 target: ws://${this.config.esp8266Config.host}:${this.config.esp8266Config.port}`
-            );
-          }
-          console.log("🎯 ======================================");
-
-          // Start appropriate connection
-          if (this.config.useMqtt && this.mqttBridge) {
-            this.mqttBridge.connect().catch((err) => {
-              console.error("❌ Failed to connect to MQTT broker:", err);
-            });
-          } else {
-            this.esp8266Client.connect();
-          }
-
+      await new Promise<void>((resolve, reject) => {
+        this.server = this.app.listen(this.config.port, () => {
+          console.log("=====================================");
+          console.log("Floyd Fish Feeder API Server READY");
+          console.log("=====================================");
+          console.log(`HTTP Server: http://localhost:${this.config.port}`);
+          console.log(`MQTT Broker: ${MQTT_CONFIG.brokerUrl}`);
+          console.log(`Health Check: http://localhost:${this.config.port}/health`);
+          console.log(`Stats: http://localhost:${this.config.port}/stats`);
+          console.log("=====================================");
           resolve();
         });
 
         this.server.on("error", (err: any) => {
           if (err.code === "EADDRINUSE") {
-            console.error(`❌ Port ${this.config.port} is already in use`);
-            console.log(`💡 Try a different port or stop the other service`);
+            console.error(`Port ${this.config.port} is already in use`);
+            console.log("Try a different port or stop the other service");
           } else {
-            console.error("❌ Server error:", err);
+            console.error("Server error:", err);
           }
           reject(err);
         });
-      } catch (error) {
-        console.error("❌ Failed to start proxy server:", error);
-        reject(error);
-      }
-    });
+      });
+
+      await this.scheduler.start();
+      console.log("[Scheduler] Feed schedules loaded");
+    } catch (error) {
+      console.error("Failed to start Floyd Feeder API server:", error);
+      throw error;
+    }
   }
 
-  /**
-   * Stop the server gracefully
-   */
   public async stop(): Promise<void> {
-    return new Promise((resolve) => {
-      console.log("🔄 Shutting down Floyd Feeder Proxy Server...");
+    console.log("Shutting down Floyd Feeder API Server...");
 
-      // Stop WebSocket proxy
-      this.wsProxyHandler.shutdown();
+    this.scheduler.stop();
+    await mqttHandler.disconnect();
 
-      // Disconnect MQTT if enabled
-      if (this.mqttBridge) {
-        this.mqttBridge.disconnect();
-        console.log("📡 MQTT Bridge disconnected");
+    await new Promise<void>((resolve) => {
+      if (!this.server) {
+        resolve();
+        return;
       }
 
-      // Close MQTT mode clients
-      this.mqttClients.forEach((client) => {
-        if (client.socket.readyState === WebSocket.OPEN) {
-          client.socket.close(1001, "Server shutdown");
-        }
-      });
-      this.mqttClients.clear();
-
-      // Close WebSocket server
-      if (this.wss) {
-        this.wss.close(() => {
-          console.log("🔌 WebSocket proxy server closed");
-        });
-      }
-
-      // Close HTTP server
       this.server.close(() => {
-        console.log("🌐 HTTP server closed");
-        console.log("✅ Floyd Feeder Proxy Server shutdown complete");
+        console.log("HTTP server closed");
         resolve();
       });
     });
+
+    await prisma.$disconnect();
+    console.log("Database disconnected");
+    console.log("Floyd Feeder API Server shutdown complete");
   }
 
-  /**
-   * Get server instance for testing
-   */
   public getApp(): express.Application {
     return this.app;
   }
 
-  /**
-   * Get server configuration
-   */
   public getConfig(): ServerConfig {
     return { ...this.config };
   }
 }
 
-// Handle process signals for graceful shutdown
-let server: FloydFeederProxyServer;
+let server: FloydFeederServer;
 
 const gracefulShutdown = async (signal: string) => {
-  console.log(`\n🔄 Received ${signal}, initiating graceful shutdown...`);
-
+  console.log(`\nReceived ${signal}, initiating graceful shutdown...`);
   if (server) {
     try {
       await server.stop();
       process.exit(0);
     } catch (error) {
-      console.error("❌ Error during shutdown:", error);
+      console.error("Error during shutdown:", error);
       process.exit(1);
     }
   } else {
@@ -566,11 +302,9 @@ const gracefulShutdown = async (signal: string) => {
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
-// Start server if this file is run directly
 if (require.main === module) {
-  console.log("🚀 Starting Floyd Fish Feeder Proxy Server...");
+  console.log("Starting Floyd Fish Feeder API Server...");
 
-  // Parse command line arguments for custom configuration
   const args = process.argv.slice(2);
   const config: Partial<ServerConfig> = {};
 
@@ -580,25 +314,15 @@ if (require.main === module) {
 
     if (key === "port" && value) {
       config.port = parseInt(value, 10);
-    } else if (key === "esp8266-host" && value) {
-      config.esp8266Config = {
-        ...DEFAULT_SERVER_CONFIG.esp8266Config,
-        host: value,
-      };
-    } else if (key === "esp8266-port" && value) {
-      config.esp8266Config = {
-        ...(config.esp8266Config || DEFAULT_SERVER_CONFIG.esp8266Config),
-        port: parseInt(value, 10),
-      };
     }
   }
 
-  server = new FloydFeederProxyServer(config);
+  server = new FloydFeederServer(config);
 
   server.start().catch((error) => {
-    console.error("❌ Failed to start proxy server:", error);
+    console.error("Failed to start server:", error);
     process.exit(1);
   });
 }
 
-export default FloydFeederProxyServer;
+export default FloydFeederServer;

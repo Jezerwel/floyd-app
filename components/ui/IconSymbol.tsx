@@ -13,6 +13,7 @@ type IconSymbolName = keyof typeof MAPPING;
  */
 const MAPPING = {
   clock: "access-time",
+  "clock.fill": "access-time",
   "house.fill": "home",
   "paperplane.fill": "send",
   "chevron.left.forwardslash.chevron.right": "code",
@@ -23,9 +24,14 @@ const MAPPING = {
   gear: "settings",
   thermometer: "thermostat",
   wifi: "wifi",
+  "wifi.slash": "signal-wifi-off",
   "arrow.clockwise": "refresh",
+  "arrow.triangle.2.circlepath": "sync",
+  "arrow.trianglehead.2.counterclockwise": "restore",
   "bell.fill": "notifications",
   "bookmark.fill": "bookmark",
+  "play.fill": "play-arrow",
+  "stop.fill": "stop",
   "slider.horizontal.3": "tune",
   "arrow.counterclockwise": "undo",
   "drop.fill": "opacity",
@@ -43,12 +49,16 @@ const MAPPING = {
   "lightbulb.fill": "lightbulb",
   "archivebox.fill": "inventory",
   power: "power",
+  "poweroff": "power-settings-new",
   xmark: "close",
   link: "link",
   trash: "delete",
   globe: "language",
   bell: "notifications-none",
   "server.rack": "dns",
+  "antenna.radiowaves.left.and.right": "settings-input-antenna",
+  waveform: "graphic-eq",
+  "bell.badge": "notifications-active",
 } as const;
 
 /**

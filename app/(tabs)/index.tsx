@@ -23,6 +23,23 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+const MOTOR_STATE_CONFIG: Record<
+  string,
+  { label: string; icon: string; colorKey: "success" | "primary" | "warning" | "error" | "muted" }
+> = {
+  idle: { label: "Idle", icon: "circle", colorKey: "muted" },
+  pre_spin: { label: "Pre-Spinning", icon: "arrow.triangle.2.circlepath", colorKey: "primary" },
+  feeding: { label: "Feeding", icon: "gearshape.fill", colorKey: "success" },
+  post_spin: { label: "Post-Spinning", icon: "arrow.triangle.2.circlepath", colorKey: "warning" },
+  jam_clear: { label: "Clearing Jam", icon: "exclamationmark.triangle.fill", colorKey: "error" },
+};
+
+function getWifiRating(rssi: number): { label: string; bars: number } {
+  if (rssi > -50) return { label: "Excellent", bars: 4 };
+  if (rssi > -70) return { label: "Good", bars: 3 };
+  return { label: "Weak", bars: 1 };
+}
+
 export default function DashboardScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme as keyof typeof Colors];
@@ -33,8 +50,6 @@ export default function DashboardScreen() {
     isConnecting,
     requestSensorData,
     esp8266Status,
-    connectionQuality,
-    latency,
   } = useESP8266();
 
   const { alerts, alertCount, hasHighSeverityAlerts, hasMediumSeverityAlerts } =
@@ -117,23 +132,31 @@ export default function DashboardScreen() {
     }
     if (esp8266Status === "connected") {
       return {
-        status: "Connected to Cloud",
+        status: "Connected to MQTT",
         color: colors.success,
         icon: "checkmark.circle.fill",
       };
     } else if (esp8266Status === "disconnected") {
       return {
-        status: "Cloud OK, ESP8266 Offline",
+        status: "MQTT OK, ESP8266 Offline",
         color: colors.warning,
         icon: "exclamationmark.triangle.fill",
       };
     }
     return {
-      status: "Cloud Connected",
+      status: "MQTT Connected",
       color: colors.success,
       icon: "checkmark.circle.fill",
     };
   }, [isConnected, esp8266Status, colors]);
+
+  const motorState = deviceData.motorState ?? "idle";
+  const motorConfig = MOTOR_STATE_CONFIG[motorState] ?? MOTOR_STATE_CONFIG.idle;
+  const motorIsActive = motorState !== "idle";
+
+  const wifiRssi = deviceData.wifiRssi;
+  const hasWifiRssi = wifiRssi !== undefined && wifiRssi !== null;
+  const wifiRating = hasWifiRssi ? getWifiRating(wifiRssi!) : null;
 
   return (
     <SafeAreaView
@@ -162,13 +185,6 @@ export default function DashboardScreen() {
                   label={connectionStatus.status}
                 />
               </View>
-              {isConnected && latency !== null && (
-                <View style={styles.latencyRow}>
-                  <Text style={[styles.latencyText, { color: colors.muted }]}>
-                    {latency}ms · {connectionQuality}
-                  </Text>
-                </View>
-              )}
             </View>
           </View>
           <TouchableOpacity
@@ -214,7 +230,7 @@ export default function DashboardScreen() {
 
         {isConnected && (
           <StatCard
-            title="Cloud Server Status"
+            title="MQTT Device Status"
             icon="globe"
             color={colors.secondary}
           >
@@ -226,7 +242,7 @@ export default function DashboardScreen() {
                   color={colors.success}
                 />
                 <Text style={[styles.statusText, { color: colors.text }]}>
-                  Cloud Server: Connected
+                  MQTT Broker: Connected
                 </Text>
               </View>
               <View style={styles.statusRow}>
@@ -260,7 +276,7 @@ export default function DashboardScreen() {
                   ]}
                 >
                   <Text style={[styles.helpText, { color: colors.text }]}>
-                    💡 The cloud server is working, but the ESP8266 hardware is
+                    The MQTT broker is working, but the ESP8266 hardware is
                     not responding. Check device power and WiFi connection.
                   </Text>
                 </View>
@@ -268,6 +284,72 @@ export default function DashboardScreen() {
             </View>
           </StatCard>
         )}
+
+        <StatCard
+          title="Motor Status"
+          icon="gearshape.fill"
+          color={colors[motorConfig.colorKey]}
+        >
+          <View style={styles.motorStatusContainer}>
+            <View style={styles.motorStateRow}>
+              <IconSymbol
+                name={motorConfig.icon as any}
+                size={20}
+                color={colors[motorConfig.colorKey]}
+              />
+              <Text
+                style={[
+                  styles.motorStateText,
+                  { color: colors[motorConfig.colorKey] },
+                ]}
+              >
+                {motorConfig.label}
+              </Text>
+            </View>
+            {motorIsActive && (
+              <View style={styles.motorSpeeds}>
+                <View style={styles.speedRow}>
+                  <Text style={[styles.speedLabel, { color: colors.muted }]}>
+                    Auger
+                  </Text>
+                  <View style={styles.speedBarContainer}>
+                    <View
+                      style={[
+                        styles.speedBarFill,
+                        {
+                          width: `${deviceData.augerSpeed ?? 0}%`,
+                          backgroundColor: colors.primary,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={[styles.speedValue, { color: colors.text }]}>
+                    {deviceData.augerSpeed ?? 0}%
+                  </Text>
+                </View>
+                <View style={styles.speedRow}>
+                  <Text style={[styles.speedLabel, { color: colors.muted }]}>
+                    Impeller
+                  </Text>
+                  <View style={styles.speedBarContainer}>
+                    <View
+                      style={[
+                        styles.speedBarFill,
+                        {
+                          width: `${deviceData.impellerSpeed ?? 0}%`,
+                          backgroundColor: colors.secondary,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={[styles.speedValue, { color: colors.text }]}>
+                    {deviceData.impellerSpeed ?? 0}%
+                  </Text>
+                </View>
+              </View>
+            )}
+          </View>
+        </StatCard>
 
         <StatCard
           title="Feeder Capacity"
@@ -350,14 +432,18 @@ export default function DashboardScreen() {
                       {
                         height: bar * 5 + 5,
                         backgroundColor:
-                          bar <= 3 ? colors.primary : colors.muted,
+                          wifiRating && bar <= wifiRating.bars
+                            ? colors.primary
+                            : colors.muted,
                       },
                     ]}
                   />
                 ))}
               </View>
               <Text style={[styles.wifiSignalText, { color: colors.text }]}>
-                Strong
+                {hasWifiRssi
+                  ? `${wifiRssi} dBm · ${wifiRating!.label}`
+                  : "No signal"}
               </Text>
             </View>
           </StatCard>
@@ -451,6 +537,49 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingHorizontal: 20,
     paddingTop: 20,
+  },
+  motorStatusContainer: {
+    gap: 12,
+  },
+  motorStateRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  motorStateText: {
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  motorSpeeds: {
+    gap: 8,
+    paddingTop: 4,
+  },
+  speedRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  speedLabel: {
+    fontSize: 13,
+    fontWeight: "500",
+    width: 60,
+  },
+  speedBarContainer: {
+    flex: 1,
+    height: 6,
+    backgroundColor: "#e2e8f0",
+    borderRadius: 3,
+    overflow: "hidden",
+  },
+  speedBarFill: {
+    height: "100%",
+    borderRadius: 3,
+  },
+  speedValue: {
+    fontSize: 13,
+    fontWeight: "600",
+    width: 36,
+    textAlign: "right",
   },
   capacityContainer: {
     flexDirection: "row",

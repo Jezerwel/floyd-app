@@ -1,0 +1,50 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./floyd.db"
+}
+
+model FeedSchedule {
+  id            String   @id @default(uuid())
+  label         String
+  enabled       Boolean  @default(true)
+  time          String
+  daysOfWeek    String   @default("0,1,2,3,4,5,6")
+  augerSpeed    Int      @default(768)
+  impellerSpeed Int      @default(1023)
+  preSpinMs     Int      @default(1500)
+  feedMs        Int      @default(3000)
+  postSpinMs    Int      @default(1500)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model FeedLog {
+  id             String   @id @default(uuid())
+  timestamp      DateTime @default(now())
+  feedMs         Int
+  augerSpeed     Int
+  impellerSpeed  Int
+  success        Boolean  @default(true)
+  errorMessage   String?
+}
+
+model AlertConfig {
+  id              String   @id @default("default")
+  lowFoodPct      Int      @default(30)
+  criticalFoodPct Int      @default(10)
+  tempMin         Float    @default(20)
+  tempMax         Float    @default(32)
+  updatedAt       DateTime @updatedAt
+}
+
+model Device {
+  id           String   @id @default(uuid())
+  chipId       String   @unique
+  name         String
+  mqttPassword String
+  claimedAt    DateTime @default(now())
+}

@@ -1,190 +1,154 @@
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { StatCard } from "@/components/ui/StatCard";
-import { TimerControl } from "@/components/ui/TimerControl";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useESP8266 } from "@/hooks/useESP8266Context";
-import { DEFAULT_TIMER_STATE, TimerState } from "@/types/timer";
 import { StatusBar } from "expo-status-bar";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   Alert,
+  GestureResponderEvent,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+function PctSlider({
+  value,
+  onValueChange,
+  color,
+  disabled,
+}: {
+  value: number;
+  onValueChange: (v: number) => void;
+  color: string;
+  disabled?: boolean;
+}) {
+  const [barWidth, setBarWidth] = useState(0);
+
+  const handlePress = useCallback(
+    (e: GestureResponderEvent) => {
+      if (disabled) return;
+      const x = e.nativeEvent.locationX;
+      const pct = Math.round(Math.max(0, Math.min(100, (x / barWidth) * 100)));
+      onValueChange(pct);
+    },
+    [barWidth, disabled, onValueChange]
+  );
+
+  return (
+    <TouchableOpacity
+      activeOpacity={1}
+      onPress={handlePress}
+      onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
+      style={[
+        styles.sliderTrack,
+        {
+          backgroundColor: color + "20",
+          opacity: disabled ? 0.5 : 1,
+        },
+      ]}
+      disabled={disabled}
+    >
+      <View
+        style={[
+          styles.sliderFill,
+          {
+            backgroundColor: color,
+            width: `${value}%` as any,
+          },
+        ]}
+      />
+      <View
+        style={[
+          styles.sliderThumb,
+          {
+            backgroundColor: color,
+            left: `${value}%` as any,
+            marginLeft: -12,
+          },
+        ]}
+      />
+    </TouchableOpacity>
+  );
+}
+
 export default function ControlsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? "light"];
-  const { toggleRelay, isConnected, deviceData, esp8266Status } = useESP8266();
+  const {
+    isConnected,
+    deviceData,
+    esp8266Status,
+    startFeed,
+    stopFeed,
+    clearJam,
+  } = useESP8266();
 
-  const [leftPaddleOn, setLeftPaddleOn] = useState(false);
-  const [rightPaddleOn, setRightPaddleOn] = useState(false);
-  const [timerState, setTimerState] = useState<TimerState>(DEFAULT_TIMER_STATE);
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [augerSpeed, setAugerSpeed] = useState(75);
+  const [impellerSpeed, setImpellerSpeed] = useState(100);
+  const [feedDuration, setFeedDuration] = useState(3);
+  const [preSpinMs, setPreSpinMs] = useState(1.5);
+  const [postSpinMs, setPostSpinMs] = useState(1.5);
 
-  const handleStopTimedFeeding = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    if (deviceData.relayState === true) {
-      toggleRelay();
-    }
-    setTimerState(DEFAULT_TIMER_STATE);
-  }, [deviceData.relayState, toggleRelay]);
+  const isFeeding = deviceData.motorState !== "idle";
 
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (timerState.isActive && timerState.remainingTime > 0) {
-      timerRef.current = setInterval(() => {
-        setTimerState((prev) => {
-          const newRemainingTime = prev.remainingTime - 1;
-          if (newRemainingTime <= 0) {
-            handleStopTimedFeeding();
-            return {
-              ...prev,
-              isActive: false,
-              remainingTime: 0,
-            };
-          }
-          return {
-            ...prev,
-            remainingTime: newRemainingTime,
-          };
-        });
-      }, 1000);
-    } else if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    return () => {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-      }
-    };
-  }, [timerState.isActive, timerState.remainingTime, handleStopTimedFeeding]);
-
-  const handleLeftPaddleToggle = () => {
-    setLeftPaddleOn(!leftPaddleOn);
+  const motorStateLabel: Record<string, string> = {
+    pre_spin: "Pre-Spinning...",
+    feeding: "Feeding...",
+    post_spin: "Post-Spinning...",
+    jam_clear: "Clearing Jam...",
   };
 
-  const handleRightPaddleToggle = () => {
-    setRightPaddleOn(!rightPaddleOn);
-  };
-
-  const handleToggleDispenser = () => {
+  const handleFeed = () => {
     if (!isConnected) {
-      Alert.alert(
-        "Error",
-        "Not connected to cloud server. Please check your connection."
-      );
+      Alert.alert("Offline", "Not connected to cloud server.");
       return;
     }
     if (esp8266Status !== "connected") {
       Alert.alert(
         "ESP8266 Not Available",
-        "The cloud server is connected, but the ESP8266 hardware is not responding. Please check the device power and WiFi connection."
+        "Connected to cloud, but ESP8266 hardware is offline."
       );
       return;
     }
-    if (timerState.isActive) {
-      Alert.alert(
-        "Timer Active",
-        "A timer is currently running. Please stop the timer first to use manual controls."
-      );
+    startFeed({
+      augerSpeed: Math.round(augerSpeed * 10.23),
+      impellerSpeed: Math.round(impellerSpeed * 10.23),
+      preSpinMs: Math.round(preSpinMs * 1000),
+      feedMs: Math.round(feedDuration * 1000),
+      postSpinMs: Math.round(postSpinMs * 1000),
+    });
+  };
+
+  const handleStop = () => {
+    stopFeed();
+  };
+
+  const handleClearJam = () => {
+    if (!isConnected) {
+      Alert.alert("Offline", "Not connected to cloud server.");
       return;
     }
-    const isCurrentlyActive = deviceData.relayState === true;
-    const action = isCurrentlyActive ? "stop" : "start";
-    const actionText = isCurrentlyActive ? "Stop" : "Start";
     Alert.alert(
-      `${actionText} Food Dispenser`,
-      `This will ${action} the food dispenser. Continue?`,
+      "Clear Jam",
+      "Run the jam-clear sequence? The auger will reverse briefly.",
       [
         { text: "Cancel", style: "cancel" },
         {
-          text: actionText,
-          style: isCurrentlyActive ? "destructive" : "default",
-          onPress: () => {
-            const success = toggleRelay();
-            if (success) {
-              Alert.alert(
-                "Success",
-                `Food dispenser ${isCurrentlyActive ? "stopped" : "activated"}!`
-              );
-            } else {
-              Alert.alert(
-                "Error",
-                `Failed to ${action} dispenser. Please try again.`
-              );
-            }
-          },
+          text: "Clear Jam",
+          style: "destructive",
+          onPress: () => clearJam(),
         },
       ]
     );
   };
 
-  const handleStartTimedFeeding = (totalSeconds: number) => {
-    if (!isConnected) {
-      Alert.alert(
-        "Error",
-        "Not connected to cloud server. Please check your connection."
-      );
-      return;
-    }
-    if (esp8266Status !== "connected") {
-      Alert.alert(
-        "ESP8266 Not Available",
-        "The cloud server is connected, but the ESP8266 hardware is not responding. Please check the device power and WiFi connection."
-      );
-      return;
-    }
-    if (deviceData.relayState === true) {
-      Alert.alert(
-        "Dispenser Already Active",
-        "The food dispenser is already running. Please stop it first before starting a timer."
-      );
-      return;
-    }
-    const success = toggleRelay();
-    if (success) {
-      setTimerState({
-        isActive: true,
-        remainingTime: totalSeconds,
-        totalTime: totalSeconds,
-        startTime: Date.now(),
-      });
-      Alert.alert(
-        "Timer Started",
-        `Food dispenser started with ${Math.floor(totalSeconds / 60)}:${(
-          totalSeconds % 60
-        )
-          .toString()
-          .padStart(2, "0")} timer`
-      );
-    } else {
-      Alert.alert("Error", "Failed to start dispenser. Please try again.");
-    }
-  };
-
-  const handleStopTimedFeedingWithAlert = () => {
-    handleStopTimedFeeding();
-    Alert.alert("Timer Stopped", "Food dispenser stopped and timer cancelled.");
-  };
-
-  const controlsEnabled = isConnected && esp8266Status === "connected";
+  const hardwareOffline = isConnected && esp8266Status !== "connected";
 
   return (
     <SafeAreaView
@@ -206,213 +170,202 @@ export default function ControlsScreen() {
       <ScrollView
         showsVerticalScrollIndicator={false}
         style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
       >
-        {esp8266Status !== "connected" && isConnected && (
-          <StatCard
-            title="Hardware Status"
-            icon="exclamationmark.triangle.fill"
-            color={colors.warning}
+        {!isConnected && (
+          <View
+            style={[styles.banner, { backgroundColor: colors.error + "20" }]}
           >
-            <View style={styles.warningContainer}>
-              <Text style={[styles.warningText, { color: colors.text }]}>
-                ESP8266 hardware is not responding. Controls are disabled until
-                the hardware reconnects.
-              </Text>
-              <Text style={[styles.warningSubtext, { color: colors.muted }]}>
-                Check device power and WiFi connection.
-              </Text>
-            </View>
-          </StatCard>
+            <IconSymbol name="wifi.slash" size={18} color={colors.error} />
+            <Text style={[styles.bannerText, { color: colors.error }]}>
+              Disconnected — controls unavailable
+            </Text>
+          </View>
         )}
 
-        <StatCard title="Paddle Controls" icon="gear" color={colors.primary}>
-          <View style={styles.paddleContainer}>
-            <TouchableOpacity
-              style={[
-                styles.paddleToggle,
-                {
-                  backgroundColor: leftPaddleOn ? colors.primary : colors.card,
-                  borderColor: leftPaddleOn ? colors.primary : colors.border,
-                  opacity: controlsEnabled ? 1 : 0.5,
-                },
-              ]}
-              onPress={handleLeftPaddleToggle}
-              disabled={!controlsEnabled}
-              accessibilityRole="button"
-              accessibilityLabel="Toggle left paddle"
-            >
-              <Text
-                style={[
-                  styles.paddleTitle,
-                  { color: leftPaddleOn ? "white" : colors.text },
-                ]}
-              >
-                Left Paddle
-              </Text>
-              <Text
-                style={[
-                  styles.paddleStatus,
-                  { color: leftPaddleOn ? "white" : colors.muted },
-                ]}
-              >
-                {leftPaddleOn ? "ON" : "OFF"}
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.paddleToggle,
-                {
-                  backgroundColor: rightPaddleOn ? colors.primary : colors.card,
-                  borderColor: rightPaddleOn ? colors.primary : colors.border,
-                  opacity: controlsEnabled ? 1 : 0.5,
-                },
-              ]}
-              onPress={handleRightPaddleToggle}
-              disabled={!controlsEnabled}
-              accessibilityRole="button"
-              accessibilityLabel="Toggle right paddle"
-            >
-              <Text
-                style={[
-                  styles.paddleTitle,
-                  { color: rightPaddleOn ? "white" : colors.text },
-                ]}
-              >
-                Right Paddle
-              </Text>
-              <Text
-                style={[
-                  styles.paddleStatus,
-                  { color: rightPaddleOn ? "white" : colors.muted },
-                ]}
-              >
-                {rightPaddleOn ? "ON" : "OFF"}
-              </Text>
-            </TouchableOpacity>
-          </View>
-
-          {!controlsEnabled && (
-            <Text style={[styles.disabledText, { color: colors.muted }]}>
-              Controls disabled -{" "}
-              {!isConnected ? "not connected" : "ESP8266 hardware offline"}
+        {hardwareOffline && (
+          <View
+            style={[styles.banner, { backgroundColor: colors.warning + "20" }]}
+          >
+            <IconSymbol
+              name="exclamationmark.triangle.fill"
+              size={18}
+              color={colors.warning}
+            />
+            <Text style={[styles.bannerText, { color: colors.warning }]}>
+              ESP8266 hardware offline — check device power & WiFi
             </Text>
-          )}
-        </StatCard>
+          </View>
+        )}
 
-        <StatCard title="Timed Feeding" icon="clock" color={colors.secondary}>
-          <TimerControl
-            onStartTimer={handleStartTimedFeeding}
-            onStopTimer={handleStopTimedFeedingWithAlert}
-            isTimerActive={timerState.isActive}
-            remainingTime={timerState.remainingTime}
-            totalTime={timerState.totalTime}
-            disabled={!controlsEnabled}
-            colors={colors}
+        {isFeeding && deviceData.motorState && (
+          <View
+            style={[
+              styles.banner,
+              { backgroundColor: colors.primary + "20" },
+            ]}
+          >
+            <IconSymbol
+              name="arrow.triangle.2.circlepath"
+              size={18}
+              color={colors.primary}
+            />
+            <Text style={[styles.bannerText, { color: colors.primary }]}>
+              {motorStateLabel[deviceData.motorState] ?? deviceData.motorState}
+            </Text>
+          </View>
+        )}
+
+        <StatCard title="Auger Speed" icon="gear" color={colors.primary}>
+          <View style={styles.sliderRow}>
+            <Text style={[styles.sliderLabel, { color: colors.text }]}>
+              {augerSpeed}%
+            </Text>
+            <Text style={[styles.sliderRaw, { color: colors.muted }]}>
+              ({Math.round(augerSpeed * 10.23)} / 1023)
+            </Text>
+          </View>
+          <PctSlider
+            value={augerSpeed}
+            onValueChange={setAugerSpeed}
+            color={colors.primary}
           />
-
-          {!controlsEnabled && (
-            <Text style={[styles.disabledText, { color: colors.muted }]}>
-              Timer disabled -{" "}
-              {!isConnected ? "not connected" : "ESP8266 hardware offline"}
-            </Text>
-          )}
         </StatCard>
 
-        <StatCard title="Manual Feed" icon="power" color={colors.success}>
-          <View style={styles.manualFeedContent}>
-            {isConnected && (
-              <View style={styles.statusContainer}>
-                <View style={styles.statusRow}>
-                  <IconSymbol
-                    name="power"
-                    size={16}
-                    color={
-                      deviceData.relayState ? colors.success : colors.muted
-                    }
-                  />
-                  <Text style={[styles.statusText, { color: colors.text }]}>
-                    Dispenser: {deviceData.relayState ? "ACTIVE" : "INACTIVE"}
-                  </Text>
-                </View>
-                {deviceData.motorOpened !== undefined && (
-                  <View style={styles.statusRow}>
-                    <IconSymbol
-                      name="gear"
-                      size={16}
-                      color={
-                        deviceData.motorOpened ? colors.success : colors.muted
-                      }
-                    />
-                    <Text style={[styles.statusText, { color: colors.text }]}>
-                      Motor: {deviceData.motorOpened ? "OPENED" : "CLOSED"}
-                    </Text>
-                  </View>
-                )}
-              </View>
-            )}
+        <StatCard title="Impeller Speed" icon="fan" color={colors.secondary}>
+          <View style={styles.sliderRow}>
+            <Text style={[styles.sliderLabel, { color: colors.text }]}>
+              {impellerSpeed}%
+            </Text>
+            <Text style={[styles.sliderRaw, { color: colors.muted }]}>
+              ({Math.round(impellerSpeed * 10.23)} / 1023)
+            </Text>
+          </View>
+          <PctSlider
+            value={impellerSpeed}
+            onValueChange={setImpellerSpeed}
+            color={colors.secondary}
+          />
+        </StatCard>
 
-            {timerState.isActive && (
-              <View
-                style={[
-                  styles.helpContainer,
-                  { backgroundColor: colors.warning + "20" },
-                ]}
-              >
-                <Text style={[styles.helpText, { color: colors.text }]}>
-                  ⏱️ Timer is active. Manual controls are disabled until timer
-                  completes or is stopped.
-                </Text>
-              </View>
-            )}
-
-            <TouchableOpacity
+        <StatCard
+          title="Feed Duration"
+          icon="timer"
+          color={colors.primary}
+        >
+          <View style={styles.inputRow}>
+            <TextInput
               style={[
-                styles.feedButton,
+                styles.numberInput,
                 {
-                  backgroundColor:
-                    controlsEnabled && !timerState.isActive
-                      ? deviceData.relayState
-                        ? colors.error
-                        : colors.success
-                      : colors.muted,
-                  opacity: controlsEnabled && !timerState.isActive ? 1 : 0.5,
+                  color: colors.text,
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
                 },
               ]}
-              onPress={handleToggleDispenser}
-              disabled={!controlsEnabled || timerState.isActive}
-              accessibilityRole="button"
-              accessibilityLabel={
-                deviceData.relayState ? "Stop feeding" : "Start feeding"
-              }
-            >
-              <IconSymbol
-                name={deviceData.relayState ? "xmark" : "power"}
-                size={24}
-                color="white"
-              />
-              <Text style={styles.feedButtonText}>
-                {deviceData.relayState ? "Stop Feeding" : "Start Feeding"}
-              </Text>
-            </TouchableOpacity>
-
-            {!controlsEnabled && !timerState.isActive && (
-              <View
-                style={[
-                  styles.helpContainer,
-                  { backgroundColor: colors.warning + "20" },
-                ]}
-              >
-                <Text style={[styles.helpText, { color: colors.text }]}>
-                  💡{" "}
-                  {!isConnected
-                    ? "Connect to the cloud server to control the dispenser."
-                    : "ESP8266 hardware is offline. Check device connection."}
-                </Text>
-              </View>
-            )}
+              value={String(feedDuration)}
+              onChangeText={(t) => {
+                const n = Number(t);
+                if (!isNaN(n) && n >= 0 && n <= 30) setFeedDuration(n);
+              }}
+              keyboardType="decimal-pad"
+              selectTextOnFocus
+              maxLength={4}
+            />
+            <Text style={[styles.inputUnit, { color: colors.muted }]}>
+              seconds (max 30)
+            </Text>
           </View>
         </StatCard>
+
+        <StatCard title="Pre-Spin" icon="arrow.up" color={colors.secondary}>
+          <View style={styles.inputRow}>
+            <TextInput
+              style={[
+                styles.numberInput,
+                {
+                  color: colors.text,
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                },
+              ]}
+              value={String(preSpinMs)}
+              onChangeText={(t) => {
+                const n = Number(t);
+                if (!isNaN(n) && n >= 0 && n <= 10) setPreSpinMs(n);
+              }}
+              keyboardType="decimal-pad"
+              selectTextOnFocus
+              maxLength={4}
+            />
+            <Text style={[styles.inputUnit, { color: colors.muted }]}>
+              seconds
+            </Text>
+          </View>
+        </StatCard>
+
+        <StatCard title="Post-Spin" icon="arrow.down" color={colors.secondary}>
+          <View style={styles.inputRow}>
+            <TextInput
+              style={[
+                styles.numberInput,
+                {
+                  color: colors.text,
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                },
+              ]}
+              value={String(postSpinMs)}
+              onChangeText={(t) => {
+                const n = Number(t);
+                if (!isNaN(n) && n >= 0 && n <= 10) setPostSpinMs(n);
+              }}
+              keyboardType="decimal-pad"
+              selectTextOnFocus
+              maxLength={4}
+            />
+            <Text style={[styles.inputUnit, { color: colors.muted }]}>
+              seconds
+            </Text>
+          </View>
+        </StatCard>
+
+        <TouchableOpacity
+          style={[
+            styles.feedButton,
+            { backgroundColor: colors.success, opacity: isFeeding ? 0.5 : 1 },
+          ]}
+          onPress={handleFeed}
+          disabled={isFeeding}
+          activeOpacity={0.8}
+        >
+          <IconSymbol name="play.fill" size={24} color="white" />
+          <Text style={styles.feedButtonText}>FEED</Text>
+        </TouchableOpacity>
+
+        {isFeeding && (
+          <TouchableOpacity
+            style={[styles.stopButton, { backgroundColor: colors.error }]}
+            onPress={handleStop}
+            activeOpacity={0.8}
+          >
+            <IconSymbol name="stop.fill" size={24} color="white" />
+            <Text style={styles.feedButtonText}>STOP</Text>
+          </TouchableOpacity>
+        )}
+
+        <TouchableOpacity
+          style={[styles.jamButton, { backgroundColor: colors.warning }]}
+          onPress={handleClearJam}
+          activeOpacity={0.8}
+        >
+          <IconSymbol
+            name="arrow.trianglehead.2.counterclockwise"
+            size={24}
+            color="white"
+          />
+          <Text style={styles.feedButtonText}>CLEAR JAM</Text>
+        </TouchableOpacity>
       </ScrollView>
     </SafeAreaView>
   );
@@ -435,98 +388,127 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+  },
+  scrollContent: {
     paddingHorizontal: 20,
+    paddingBottom: 40,
   },
-  paddleContainer: {
+  banner: {
     flexDirection: "row",
-    gap: 16,
-    minHeight: 180,
-  },
-  paddleToggle: {
-    flex: 1,
     alignItems: "center",
+    gap: 10,
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  bannerText: {
+    fontSize: 14,
+    fontWeight: "600",
+    flex: 1,
+  },
+  sliderRow: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 8,
+    marginBottom: 12,
+  },
+  sliderLabel: {
+    fontSize: 28,
+    fontWeight: "bold",
+  },
+  sliderRaw: {
+    fontSize: 13,
+  },
+  sliderTrack: {
+    height: 32,
+    borderRadius: 16,
     justifyContent: "center",
-    gap: 12,
-    paddingVertical: 24,
+    overflow: "hidden",
+  },
+  sliderFill: {
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    borderRadius: 16,
+  },
+  sliderThumb: {
+    position: "absolute",
+    width: 24,
+    height: 24,
     borderRadius: 12,
     borderWidth: 2,
+    borderColor: "white",
     shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 3.84,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 2,
     elevation: 3,
   },
-  paddleTitle: {
-    fontSize: 16,
-    fontWeight: "600",
-  },
-  paddleStatus: {
-    fontSize: 14,
-    fontWeight: "bold",
-  },
-  manualFeedContent: {
-    gap: 16,
-  },
-  statusContainer: {
-    gap: 8,
-    marginBottom: 8,
-  },
-  statusRow: {
+  inputRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: 12,
   },
-  statusText: {
-    fontSize: 14,
-    fontWeight: "500",
-  },
-  warningContainer: {
-    padding: 16,
-    gap: 8,
-  },
-  warningText: {
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-  warningSubtext: {
-    fontSize: 14,
-  },
-  disabledText: {
-    fontSize: 14,
+  numberInput: {
+    fontSize: 20,
+    fontWeight: "600",
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+    minWidth: 90,
     textAlign: "center",
-    fontStyle: "italic",
   },
-  helpContainer: {
-    padding: 16,
-    borderRadius: 12,
-    marginTop: 16,
-  },
-  helpText: {
+  inputUnit: {
     fontSize: 14,
-    textAlign: "center",
   },
   feedButton: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
-    gap: 8,
-    paddingVertical: 16,
-    borderRadius: 12,
+    gap: 10,
+    paddingVertical: 20,
+    borderRadius: 16,
+    marginTop: 8,
     shadowColor: "#000",
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  stopButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 20,
+    borderRadius: 16,
+    marginTop: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    elevation: 6,
+  },
+  jamButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    paddingVertical: 18,
+    borderRadius: 16,
+    marginTop: 12,
+    shadowColor: "#000",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
   },
   feedButtonText: {
     color: "white",
-    fontSize: 18,
-    fontWeight: "600",
+    fontSize: 20,
+    fontWeight: "700",
+    letterSpacing: 1,
   },
 });

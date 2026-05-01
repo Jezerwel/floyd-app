@@ -5,7 +5,7 @@ import useAlerts from "@/hooks/useAlerts";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useESP8266 } from "@/hooks/useESP8266Context";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   FlatList,
   ScrollView,
@@ -26,6 +26,28 @@ interface SensorLogEntry {
   ultrasonicSensorConnected: boolean;
 }
 
+interface FeedLogEntry {
+  id: string;
+  timestamp: string;
+  augerSpeed: number;
+  impellerSpeed: number;
+  feedMs: number;
+  success: boolean;
+  errorMessage?: string;
+}
+
+const CLOUD_SERVER = "https://floyd-feeder.up.railway.app";
+
+interface SensorLogEntry {
+  id: string;
+  timestamp: Date;
+  temperature?: number;
+  distance?: number;
+  foodLevel?: number;
+  temperatureSensorConnected: boolean;
+  ultrasonicSensorConnected: boolean;
+}
+
 export default function LogsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? "light"];
@@ -35,6 +57,29 @@ export default function LogsScreen() {
   const [sensorLogs, setSensorLogs] = useState<SensorLogEntry[]>([]);
   const [showTemperatureLogs, setShowTemperatureLogs] = useState(true);
   const [showAlertLogs, setShowAlertLogs] = useState(true);
+  const [showFeedHistory, setShowFeedHistory] = useState(false);
+  const [feedLogs, setFeedLogs] = useState<FeedLogEntry[]>([]);
+
+  // Fetch feed history from server
+  const fetchFeedHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${CLOUD_SERVER}/api/history?limit=50`);
+      const data = await res.json();
+      if (data.success && data.logs) {
+        setFeedLogs(data.logs);
+      }
+    } catch (err) {
+      console.error("Failed to fetch feed history:", err);
+    }
+  }, []);
+
+  const handleFeedHistoryToggle = () => {
+    const next = !showFeedHistory;
+    setShowFeedHistory(next);
+    if (next && feedLogs.length === 0) {
+      fetchFeedHistory();
+    }
+  };
 
   // Log sensor data when it updates (optimized to prevent excessive re-renders)
   useEffect(() => {
@@ -255,12 +300,29 @@ export default function LogsScreen() {
             <Text
               style={[
                 styles.toggleText,
-                {
-                  color: showAlertLogs ? "white" : colors.text,
-                },
+                { color: showAlertLogs ? "white" : colors.text },
               ]}
             >
               Alerts History
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.logToggle,
+              {
+                backgroundColor: showFeedHistory ? colors.accent : colors.border,
+              },
+            ]}
+            onPress={handleFeedHistoryToggle}
+          >
+            <Text
+              style={[
+                styles.toggleText,
+                { color: showFeedHistory ? "white" : colors.text },
+              ]}
+            >
+              Feed History
             </Text>
           </TouchableOpacity>
         </View>
@@ -321,6 +383,59 @@ export default function LogsScreen() {
                 </Text>
                 <Text style={[styles.emptySubtext, { color: colors.muted }]}>
                   All systems operating normally
+                </Text>
+              </View>
+            )}
+          </StatCard>
+        )}
+
+        {/* Feed History */}
+        {showFeedHistory && (
+          <StatCard
+            title={`Feed History (${feedLogs.length})`}
+            icon="clock.fill"
+            color={colors.accent}
+          >
+            {feedLogs.length > 0 ? (
+              feedLogs.map((log) => (
+                <View
+                  key={log.id}
+                  style={[styles.logItem, { backgroundColor: colors.card, borderColor: colors.border }]}
+                >
+                  <View style={styles.logHeader}>
+                    <Text style={[styles.logTime, { color: colors.text }]}>
+                      {new Date(log.timestamp).toLocaleString()}
+                    </Text>
+                    <Text style={[styles.logTime, { color: log.success ? colors.success : colors.error }]}>
+                      {log.success ? "OK" : "FAIL"}
+                    </Text>
+                  </View>
+                  <View style={styles.logContent}>
+                    <Text style={[styles.logValue, { color: colors.text }]}>
+                      {Math.round(log.feedMs / 1000)}s
+                    </Text>
+                    <Text style={[styles.logValue, { color: colors.muted }]}>
+                      Auger: {Math.round(log.augerSpeed / 10.23)}%
+                    </Text>
+                    <Text style={[styles.logValue, { color: colors.muted }]}>
+                      Impeller: {Math.round(log.impellerSpeed / 10.23)}%
+                    </Text>
+                  </View>
+                  {log.errorMessage && (
+                    <Text style={[styles.logValue, { color: colors.error }]}>
+                      {log.errorMessage}
+                    </Text>
+                  )}
+                </View>
+              ))
+            ) : (
+              <View style={styles.emptyState}>
+                <IconSymbol name="clock.fill" size={32} color={colors.muted} />
+                <Text style={[styles.emptyText, { color: colors.muted }]}>
+                  No feed history yet
+                </Text>
+                <Text style={[styles.emptySubtext, { color: colors.muted }]}>
+                  Feed logs will appear here after scheduled or manual feeds
                 </Text>
               </View>
             )}
