@@ -40,3 +40,11 @@ model AlertConfig {
   tempMax         Float    @default(32)
   updatedAt       DateTime @updatedAt
 }
+
+model Device {
+  id           String   @id @default(uuid())
+  chipId       String   @unique
+  name         String
+  mqttPassword String
+  claimedAt    DateTime @default(now())
+}

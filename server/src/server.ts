@@ -1,43 +1,31 @@
 /**
- * Floyd Fish Feeder Express Proxy Server
- * TypeScript Express server with WebSocket proxy support
- * Bridges React Native app and ESP8266 hardware via direct WebSocket connection
+ * Floyd Fish Feeder API Server
+ * Express REST API with MQTT broker integration for cloud device control.
  */
 
 import cors from "cors";
 import express from "express";
-import { createServer } from "http";
-import WebSocket, { WebSocketServer } from "ws";
-import { ESP8266Client } from "./services/esp8266Client";
-import { DEFAULT_SERVER_CONFIG, ServerConfig } from "./types";
-import { WebSocketProxyHandler } from "./websocket/proxyHandlers";
-import FeedScheduler from "./services/scheduler";
-import prisma from "./services/db";
 import type { Request, Response, NextFunction } from "express";
+import type { Server as HttpServer } from "http";
+import prisma from "./services/db";
+import mqttHandler from "./services/mqttClient";
+import FeedScheduler from "./services/scheduler";
+import { DEFAULT_SERVER_CONFIG, MQTT_CONFIG, ServerConfig } from "./types";
 
-class FloydFeederProxyServer {
-  private app: express.Application;
-  private server: ReturnType<typeof createServer>;
-  private wss?: WebSocketServer;
-  private config: ServerConfig;
-
-  private esp8266Client: ESP8266Client;
-  private wsProxyHandler: WebSocketProxyHandler;
-  private scheduler: FeedScheduler;
+class FloydFeederServer {
+  private readonly app: express.Application;
+  private server?: HttpServer;
+  private readonly config: ServerConfig;
+  private readonly scheduler: FeedScheduler;
+  private readonly startTime: number = Date.now();
 
   constructor(config: Partial<ServerConfig> = {}) {
     this.config = { ...DEFAULT_SERVER_CONFIG, ...config };
-
-    this.esp8266Client = new ESP8266Client(this.config.esp8266Config);
-    this.wsProxyHandler = new WebSocketProxyHandler(this.esp8266Client);
-    this.scheduler = new FeedScheduler(this.esp8266Client);
-
+    this.scheduler = new FeedScheduler();
     this.app = express();
     this.setupExpress();
 
-    this.server = createServer(this.app);
-
-    console.log("Floyd Feeder Proxy Server initialized");
+    console.log("Floyd Feeder API Server initialized");
     console.log("Configuration:", JSON.stringify(this.config, null, 2));
   }
 
@@ -55,110 +43,85 @@ class FloydFeederProxyServer {
 
     this.app.use(express.json());
 
-    this.app.get("/health", (_req: Request, res: Response) => {
-      const esp8266Status = this.esp8266Client.getStatus();
+    const asyncHandler = (fn: (req: Request, res: Response) => Promise<void>) =>
+      (req: Request, res: Response) => {
+        fn(req, res).catch((err: Error) => {
+          console.error(err);
+          res.status(500).json({ success: false, error: "Internal server error" });
+        });
+      };
 
+    this.app.get("/health", (_req: Request, res: Response) => {
       res.json({
         status: "healthy",
         timestamp: new Date().toISOString(),
-        mode: "direct",
-        proxyServer: {
+        mode: "mqtt",
+        server: {
           uptime: Date.now() - this.startTime,
-          connectedClients: this.wsProxyHandler.getClientsInfo().length,
         },
-        esp8266: {
-          connected: esp8266Status.isConnected,
-          connecting: esp8266Status.isConnecting,
-          reconnectAttempts: esp8266Status.reconnectAttempts,
-          host: esp8266Status.config.host,
-          port: esp8266Status.config.port,
+        mqtt: {
+          brokerUrl: MQTT_CONFIG.brokerUrl,
         },
       });
     });
 
     this.app.get("/stats", (_req: Request, res: Response) => {
-      const stats = this.wsProxyHandler.getStats();
       res.json({
-        proxyServer: {
+        server: {
           uptime: Date.now() - this.startTime,
           startTime: this.startTime,
           config: this.config,
         },
-        websocket: stats,
+        mqtt: {
+          brokerUrl: MQTT_CONFIG.brokerUrl,
+        },
       });
-    });
-
-    this.app.post("/api/esp8266/connect", (_req: Request, res: Response) => {
-      this.esp8266Client.connect();
-      res.json({ success: true, message: "ESP8266 connection initiated" });
-    });
-
-    this.app.post("/api/esp8266/disconnect", (_req: Request, res: Response) => {
-      this.esp8266Client.disconnect();
-      res.json({ success: true, message: "ESP8266 disconnected" });
-    });
-
-    this.app.post("/api/esp8266/reconnect", (_req: Request, res: Response) => {
-      this.wsProxyHandler.forceESP8266Reconnect();
-      res.json({ success: true, message: "ESP8266 reconnection initiated" });
-    });
-
-    this.app.get("/api/esp8266/status", (_req: Request, res: Response) => {
-      const status = this.esp8266Client.getStatus();
-      res.json(status);
-    });
-
-    this.app.put("/api/esp8266/config", (req: Request, res: Response) => {
-      const { host, port, reconnectDelay, maxReconnectAttempts, connectionTimeout } = req.body;
-      try {
-        this.wsProxyHandler.updateESP8266Config({ host, port, reconnectDelay, maxReconnectAttempts, connectionTimeout });
-        res.json({
-          success: true,
-          message: "ESP8266 configuration updated",
-          config: this.esp8266Client.getStatus().config,
-        });
-      } catch {
-        res.status(400).json({ success: false, message: "Invalid configuration parameters" });
-      }
-    });
-
-    this.app.post("/api/command", (req: Request, res: Response) => {
-      const { action, parameters } = req.body;
-      if (!action) {
-        res.status(400).json({ success: false, message: "Missing action parameter" });
-        return;
-      }
-      const success = this.esp8266Client.sendCommand({ action, parameters });
-      res.json({
-        success,
-        message: success ? `Command ${action} sent to ESP8266` : "Failed to send command to ESP8266",
-      });
-    });
-
-    this.app.get("/api/clients", (_req: Request, res: Response) => {
-      const clients = this.wsProxyHandler.getClientsInfo();
-      res.json({ count: clients.length, clients });
     });
 
     this.app.get("/api/config", (_req: Request, res: Response) => {
       res.json({
         server: this.config,
-        esp8266: this.esp8266Client.getStatus().config,
+        mqtt: MQTT_CONFIG,
       });
     });
 
-    // Async handler wrapper for Express 4
-    const asyncHandler = (fn: (req: Request, res: Response) => Promise<void>) =>
-      (req: Request, res: Response) => {
-        fn(req, res).catch((err: Error) => {
-          console.error(err);
-          res.status(500).json({ success: false, error: 'Internal server error' });
-        });
-      };
+    this.app.post("/api/devices/claim", asyncHandler(async (req, res) => {
+      const { deviceId, deviceName, mqttPassword } = req.body;
 
-    // Schedule endpoints
+      if (!deviceId || !mqttPassword) {
+        res.status(400).json({ success: false, error: "deviceId and mqttPassword required" });
+        return;
+      }
+
+      const existing = await prisma.device.findUnique({ where: { chipId: deviceId } });
+      const device = existing
+        ? await prisma.device.update({
+            where: { chipId: deviceId },
+            data: {
+              name: deviceName || existing.name,
+              mqttPassword,
+              claimedAt: new Date(),
+            },
+          })
+        : await prisma.device.create({
+            data: {
+              chipId: deviceId,
+              name: deviceName || "Floyd Feeder",
+              mqttPassword,
+            },
+          });
+
+      await mqttHandler.subscribeDevice(deviceId);
+      res.status(existing ? 200 : 201).json({ success: true, device });
+    }));
+
+    this.app.get("/api/devices", asyncHandler(async (_req, res) => {
+      const devices = await prisma.device.findMany({ orderBy: { claimedAt: "desc" } });
+      res.json({ success: true, devices });
+    }));
+
     this.app.get("/api/schedules", asyncHandler(async (_req, res) => {
-      const schedules = await prisma.feedSchedule.findMany({ orderBy: { createdAt: 'asc' } });
+      const schedules = await prisma.feedSchedule.findMany({ orderBy: { createdAt: "asc" } });
       res.json({ success: true, schedules });
     }));
 
@@ -166,9 +129,9 @@ class FloydFeederProxyServer {
       const { label, time, daysOfWeek, augerSpeed, impellerSpeed, preSpinMs, feedMs, postSpinMs } = req.body;
       const schedule = await prisma.feedSchedule.create({
         data: {
-          label: label || 'Feed',
+          label: label || "Feed",
           time,
-          daysOfWeek: daysOfWeek || '0,1,2,3,4,5,6',
+          daysOfWeek: daysOfWeek || "0,1,2,3,4,5,6",
           augerSpeed: augerSpeed || 768,
           impellerSpeed: impellerSpeed || 1023,
           preSpinMs: preSpinMs || 1500,
@@ -199,42 +162,47 @@ class FloydFeederProxyServer {
       res.json({ success: true });
     }));
 
-    // History endpoint
     this.app.get("/api/history", asyncHandler(async (req, res) => {
-      const limit = parseInt(req.query.limit as string) || 50;
-      const logs = await prisma.feedLog.findMany({ orderBy: { timestamp: 'desc' }, take: limit });
+      const limit = parseInt(req.query.limit as string, 10) || 50;
+      const logs = await prisma.feedLog.findMany({ orderBy: { timestamp: "desc" }, take: limit });
       res.json({ success: true, logs });
     }));
 
-    // Alert config endpoints
     this.app.get("/api/alerts/config", asyncHandler(async (_req, res) => {
-      const config = await prisma.alertConfig.findUnique({ where: { id: 'default' } });
-      res.json({ success: true, config: config || { lowFoodPct: 30, criticalFoodPct: 10, tempMin: 20, tempMax: 32 } });
+      const config = await prisma.alertConfig.findUnique({ where: { id: "default" } });
+      res.json({
+        success: true,
+        config: config || { lowFoodPct: 30, criticalFoodPct: 10, tempMin: 20, tempMax: 32 },
+      });
     }));
 
     this.app.put("/api/alerts/config", asyncHandler(async (req, res) => {
       const { lowFoodPct, criticalFoodPct, tempMin, tempMax } = req.body;
       const config = await prisma.alertConfig.upsert({
-        where: { id: 'default' },
+        where: { id: "default" },
         update: { lowFoodPct, criticalFoodPct, tempMin, tempMax },
-        create: { id: 'default', lowFoodPct, criticalFoodPct, tempMin, tempMax },
+        create: { id: "default", lowFoodPct, criticalFoodPct, tempMin, tempMax },
       });
       res.json({ success: true, config });
     }));
 
-    this.app.use("*", (req, res) => {
+    this.app.use("*", (_req, res) => {
       res.status(404).json({
         error: "Endpoint not found",
-        message: "This Floyd Feeder proxy server endpoint does not exist",
+        message: "This Floyd Feeder API endpoint does not exist",
         availableEndpoints: [
-          "GET /health", "GET /stats",
-          "GET /api/schedules", "POST /api/schedules", "PUT /api/schedules/:id", "DELETE /api/schedules/:id",
+          "GET /health",
+          "GET /stats",
+          "GET /api/config",
+          "GET /api/devices",
+          "POST /api/devices/claim",
+          "GET /api/schedules",
+          "POST /api/schedules",
+          "PUT /api/schedules/:id",
+          "DELETE /api/schedules/:id",
           "GET /api/history",
-          "GET /api/alerts/config", "PUT /api/alerts/config",
-          "GET /api/esp8266/status", "GET /api/clients", "GET /api/config",
-          "POST /api/esp8266/connect", "POST /api/esp8266/disconnect", "POST /api/esp8266/reconnect",
-          "POST /api/command", "PUT /api/esp8266/config",
-          "WebSocket: ws://localhost:" + this.config.port,
+          "GET /api/alerts/config",
+          "PUT /api/alerts/config",
         ],
       });
     });
@@ -245,40 +213,21 @@ class FloydFeederProxyServer {
     });
   }
 
-  private setupWebSocket(): void {
-    this.wss = new WebSocketServer({ server: this.server, path: "/" });
-    console.log("WebSocket proxy server created");
-
-    this.wss.on("connection", (socket: WebSocket, request) => {
-      const clientId = this.wsProxyHandler.handleConnection(socket, request);
-      console.log(`WebSocket connection established: ${clientId}`);
-    });
-
-    console.log("WebSocket proxy server listening for React Native connections");
-  }
-
-  private startTime: number = Date.now();
-
   public async start(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      try {
-        this.setupWebSocket();
+    try {
+      await mqttHandler.connect();
+      await mqttHandler.subscribeKnownDevices();
 
-        this.server.listen(this.config.port, () => {
+      await new Promise<void>((resolve, reject) => {
+        this.server = this.app.listen(this.config.port, () => {
           console.log("=====================================");
-          console.log("Floyd Fish Feeder Proxy Server READY");
+          console.log("Floyd Fish Feeder API Server READY");
           console.log("=====================================");
           console.log(`HTTP Server: http://localhost:${this.config.port}`);
-          console.log(`WebSocket: ws://localhost:${this.config.port}`);
+          console.log(`MQTT Broker: ${MQTT_CONFIG.brokerUrl}`);
           console.log(`Health Check: http://localhost:${this.config.port}/health`);
           console.log(`Stats: http://localhost:${this.config.port}/stats`);
-          console.log(`ESP8266 target: ws://${this.config.esp8266Config.host}:${this.config.esp8266Config.port}`);
           console.log("=====================================");
-
-          this.esp8266Client.connect();
-          this.scheduler.start().then(() => {
-            console.log("[Scheduler] Feed schedules loaded");
-          });
           resolve();
         });
 
@@ -291,35 +240,37 @@ class FloydFeederProxyServer {
           }
           reject(err);
         });
-      } catch (error) {
-        console.error("Failed to start proxy server:", error);
-        reject(error);
-      }
-    });
+      });
+
+      await this.scheduler.start();
+      console.log("[Scheduler] Feed schedules loaded");
+    } catch (error) {
+      console.error("Failed to start Floyd Feeder API server:", error);
+      throw error;
+    }
   }
 
   public async stop(): Promise<void> {
-    return new Promise((resolve) => {
-      console.log("Shutting down Floyd Feeder Proxy Server...");
+    console.log("Shutting down Floyd Feeder API Server...");
 
-      this.wsProxyHandler.shutdown();
-      this.scheduler.stop();
+    this.scheduler.stop();
+    await mqttHandler.disconnect();
 
-      if (this.wss) {
-        this.wss.close(() => {
-          console.log("WebSocket proxy server closed");
-        });
+    await new Promise<void>((resolve) => {
+      if (!this.server) {
+        resolve();
+        return;
       }
 
       this.server.close(() => {
         console.log("HTTP server closed");
-        prisma.$disconnect().then(() => {
-          console.log("Database disconnected");
-          console.log("Floyd Feeder Proxy Server shutdown complete");
-          resolve();
-        });
+        resolve();
       });
     });
+
+    await prisma.$disconnect();
+    console.log("Database disconnected");
+    console.log("Floyd Feeder API Server shutdown complete");
   }
 
   public getApp(): express.Application {
@@ -331,7 +282,7 @@ class FloydFeederProxyServer {
   }
 }
 
-let server: FloydFeederProxyServer;
+let server: FloydFeederServer;
 
 const gracefulShutdown = async (signal: string) => {
   console.log(`\nReceived ${signal}, initiating graceful shutdown...`);
@@ -352,7 +303,7 @@ process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
 if (require.main === module) {
-  console.log("Starting Floyd Fish Feeder Proxy Server...");
+  console.log("Starting Floyd Fish Feeder API Server...");
 
   const args = process.argv.slice(2);
   const config: Partial<ServerConfig> = {};
@@ -363,22 +314,15 @@ if (require.main === module) {
 
     if (key === "port" && value) {
       config.port = parseInt(value, 10);
-    } else if (key === "esp8266-host" && value) {
-      config.esp8266Config = { ...DEFAULT_SERVER_CONFIG.esp8266Config, host: value };
-    } else if (key === "esp8266-port" && value) {
-      config.esp8266Config = {
-        ...(config.esp8266Config || DEFAULT_SERVER_CONFIG.esp8266Config),
-        port: parseInt(value, 10),
-      };
     }
   }
 
-  server = new FloydFeederProxyServer(config);
+  server = new FloydFeederServer(config);
 
   server.start().catch((error) => {
-    console.error("Failed to start proxy server:", error);
+    console.error("Failed to start server:", error);
     process.exit(1);
   });
 }
 
-export default FloydFeederProxyServer;
+export default FloydFeederServer;

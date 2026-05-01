@@ -48,3 +48,17 @@ export async function fetchFeedHistory(limit = 50) {
   const res = await fetch(`${CLOUD_SERVER}/api/history?limit=${limit}`);
   return res.json();
 }
+
+export async function claimDevice(deviceId: string, deviceName: string, mqttPassword: string) {
+  const res = await fetch(`${CLOUD_SERVER}/api/devices/claim`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ deviceId, deviceName, mqttPassword }),
+  });
+  return res.json();
+}
+
+export async function fetchDevices() {
+  const res = await fetch(`${CLOUD_SERVER}/api/devices`);
+  return res.json();
+}
