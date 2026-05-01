@@ -1,5 +1,6 @@
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { router } from "expo-router";
 import React from "react";
 import {
   ActivityIndicator,
@@ -18,14 +19,15 @@ const ESP8266Connection: React.FC = () => {
     isConnecting,
     error,
     connectionAttempts,
+    chipId,
     connect,
     disconnect,
     resetConnection,
-    cloudServerUrl,
+    mqttBrokerUrl,
   } = useESP8266();
 
   const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? "light"];
+  const colors = Colors[colorScheme === "dark" ? "dark" : "light"];
 
   const handleConnect = () => {
     connect();
@@ -35,10 +37,14 @@ const ESP8266Connection: React.FC = () => {
     disconnect();
   };
 
+  const handleProvision = () => {
+    router.push("/provision");
+  };
+
   return (
     <View style={styles.container}>
       {!isConnected && (
-        <StatCard title="Cloud Connection" icon="globe" color={colors.primary}>
+        <StatCard title="MQTT Device" icon="globe" color={colors.primary}>
           <View style={styles.formContainer}>
             {error && (
               <View
@@ -52,7 +58,7 @@ const ESP8266Connection: React.FC = () => {
                 </Text>
                 {connectionAttempts > 0 && (
                   <Text style={[styles.errorSubtext, { color: colors.error }]}>
-                    Attempt {connectionAttempts}/5
+                    Attempt {connectionAttempts}
                   </Text>
                 )}
                 <View style={styles.troubleshootingContainer}>
@@ -62,7 +68,7 @@ const ESP8266Connection: React.FC = () => {
                       { color: colors.warning },
                     ]}
                   >
-                    💡 Troubleshooting Tips:
+                    Troubleshooting Tips:
                   </Text>
                   <Text
                     style={[
@@ -70,8 +76,8 @@ const ESP8266Connection: React.FC = () => {
                       { color: colors.muted },
                     ]}
                   >
-                    • Check your internet connection{"\n"}• The cloud server may
-                    be temporarily unavailable{"\n"}• Try again in a few moments
+                    • Check your internet connection{"\n"}• Confirm the feeder is
+                    powered on{"\n"}• Re-run provisioning if this is a new device
                   </Text>
                 </View>
               </View>
@@ -87,13 +93,16 @@ const ESP8266Connection: React.FC = () => {
                 <IconSymbol name="globe" size={32} color={colors.primary} />
               </View>
               <Text style={[styles.cloudTitle, { color: colors.text }]}>
-                Floyd Feeder Cloud
+                Floyd Feeder MQTT
               </Text>
               <Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
-                Connect to your fish feeder from anywhere
+                {chipId ? "Waiting for the feeder to come online" : "Provision a feeder to connect from anywhere"}
               </Text>
               <Text style={[styles.serverUrl, { color: colors.muted }]}>
-                {cloudServerUrl}
+                {chipId ? `Device ${chipId}` : "No device claimed"}
+              </Text>
+              <Text style={[styles.serverUrl, { color: colors.muted }]}>
+                {mqttBrokerUrl}
               </Text>
             </View>
 
@@ -101,13 +110,13 @@ const ESP8266Connection: React.FC = () => {
               style={[
                 styles.connectButton,
                 {
-                  backgroundColor: isConnecting ? colors.muted : colors.primary,
+                  backgroundColor: isConnecting || !chipId ? colors.muted : colors.primary,
                 },
               ]}
               onPress={handleConnect}
-              disabled={isConnecting}
+              disabled={isConnecting || !chipId}
               accessibilityRole="button"
-              accessibilityLabel="Connect to cloud server"
+              accessibilityLabel="Reconnect to MQTT broker"
             >
               {isConnecting ? (
                 <>
@@ -117,17 +126,29 @@ const ESP8266Connection: React.FC = () => {
               ) : (
                 <>
                   <IconSymbol name="link" size={18} color="white" />
-                  <Text style={styles.connectButtonText}>Connect</Text>
+                  <Text style={styles.connectButtonText}>Reconnect</Text>
                 </>
               )}
             </TouchableOpacity>
+
+            {!chipId && (
+              <TouchableOpacity
+                style={[styles.connectButton, { backgroundColor: colors.success }]}
+                onPress={handleProvision}
+                accessibilityRole="button"
+                accessibilityLabel="Open feeder provisioning"
+              >
+                <IconSymbol name="link" size={18} color="white" />
+                <Text style={styles.connectButtonText}>Set Up Feeder</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </StatCard>
       )}
 
       {isConnected && (
         <StatCard
-          title="Connected to Cloud"
+          title="Connected to MQTT"
           icon="checkmark.circle.fill"
           color={colors.success}
         >
@@ -140,11 +161,11 @@ const ESP8266Connection: React.FC = () => {
                 ]}
               />
               <Text style={[styles.statusText, { color: colors.text }]}>
-                Online
+              Online{chipId ? ` · ${chipId}` : ""}
               </Text>
             </View>
             <Text style={[styles.serverUrl, { color: colors.muted }]}>
-              {cloudServerUrl}
+              {mqttBrokerUrl}
             </Text>
 
             <View style={styles.actionsContainer}>
@@ -152,7 +173,7 @@ const ESP8266Connection: React.FC = () => {
                 style={[styles.actionButton, { backgroundColor: colors.error }]}
                 onPress={handleDisconnect}
                 accessibilityRole="button"
-                accessibilityLabel="Disconnect from cloud server"
+                accessibilityLabel="Disconnect from MQTT broker"
               >
                 <IconSymbol name="xmark" size={16} color="white" />
                 <Text style={styles.actionButtonText}>Disconnect</Text>
@@ -165,7 +186,7 @@ const ESP8266Connection: React.FC = () => {
                 ]}
                 onPress={resetConnection}
                 accessibilityRole="button"
-                accessibilityLabel="Reconnect to cloud server"
+                accessibilityLabel="Reconnect to MQTT broker"
               >
                 <IconSymbol name="arrow.clockwise" size={16} color="white" />
                 <Text style={styles.actionButtonText}>Reconnect</Text>

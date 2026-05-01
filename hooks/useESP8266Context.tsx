@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, {
   createContext,
   ReactNode,
@@ -6,7 +7,8 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import useWebSocket, { ConnectionQuality } from "./useWebSocket";
+import { useMountEffect } from "./useMountEffect";
+import useMQTT, { MQTTMessage } from "./useMQTT";
 
 interface FeederConfig {
   cylinderRadius: number;
@@ -26,7 +28,7 @@ interface ESP8266Data {
   ultrasonicSensorConnected?: boolean;
   distance?: number;
   foodLevelPercentage?: number;
-  motorState?: 'idle' | 'pre_spin' | 'feeding' | 'post_spin' | 'jam_clear';
+  motorState?: "idle" | "pre_spin" | "feeding" | "post_spin" | "jam_clear";
   augerSpeed?: number;
   impellerSpeed?: number;
   wifiRssi?: number;
@@ -36,22 +38,27 @@ interface ESP8266Data {
   proxyConnected?: boolean;
 }
 
+interface FeedParams {
+  augerSpeed: number;
+  impellerSpeed: number;
+  preSpinMs: number;
+  feedMs: number;
+  postSpinMs: number;
+}
+
 interface ESP8266ContextType {
   isConnected: boolean;
   isConnecting: boolean;
   error: string | null;
   connectionAttempts: number;
   deviceData: ESP8266Data;
+  chipId: string | null;
+  setChipId: (chipId: string | null) => void;
   connect: () => void;
   disconnect: () => void;
   resetConnection: () => void;
-  startFeed: (params: {
-    augerSpeed: number;
-    impellerSpeed: number;
-    preSpinMs: number;
-    feedMs: number;
-    postSpinMs: number;
-  }) => void;
+  publishCommand: (action: string, parameters?: object) => boolean;
+  startFeed: (params: FeedParams) => void;
   stopFeed: () => void;
   clearJam: (speed?: number, duration?: number) => void;
   setSensorReadingInterval: (interval: number) => boolean;
@@ -61,100 +68,144 @@ interface ESP8266ContextType {
   autoRefreshInterval: number;
   setAutoRefreshInterval: (interval: number) => void;
   esp8266Status: "connected" | "disconnected" | "unknown";
-  connectionQuality: ConnectionQuality;
-  latency: number | null;
-  cloudServerUrl: string;
+  mqttBrokerUrl: string;
 }
 
 const ESP8266Context = createContext<ESP8266ContextType | null>(null);
 
 const DEFAULT_AUTO_REFRESH_INTERVAL = 10000;
-const CLOUD_SERVER_URL = "wss://floyd-feeder.up.railway.app";
 
 interface ESP8266ProviderProps {
   children: ReactNode;
+  initialChipId?: string | null;
 }
 
 export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
   children,
+  initialChipId = null,
 }) => {
+  const [chipId, setChipIdState] = useState<string | null>(initialChipId);
   const [deviceData, setDeviceData] = useState<ESP8266Data>({});
   const [isAutoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(
     DEFAULT_AUTO_REFRESH_INTERVAL
   );
 
+  const handleMessage = useCallback((message: MQTTMessage) => {
+    switch (message.type) {
+      case "sensor_data":
+        setDeviceData((prev) => ({
+          ...prev,
+          temperature: (message.data.temperature as number) ?? prev.temperature,
+          distance: (message.data.distance as number) ?? prev.distance,
+          foodLevelPercentage: (message.data.foodLevelPercentage as number) ?? prev.foodLevelPercentage,
+          temperatureSensorConnected: (message.data.temperatureSensorConnected as boolean) ?? prev.temperatureSensorConnected,
+          ultrasonicSensorConnected: (message.data.ultrasonicSensorConnected as boolean) ?? prev.ultrasonicSensorConnected,
+          motorState: (message.data.motorState as ESP8266Data["motorState"]) || prev.motorState || "idle",
+          augerSpeed: (message.data.augerSpeed as number) ?? prev.augerSpeed,
+          impellerSpeed: (message.data.impellerSpeed as number) ?? prev.impellerSpeed,
+          lastUpdate: message.timestamp,
+          proxyConnected: true,
+          esp8266Connected: true,
+        }));
+        break;
+      case "control_response":
+        setDeviceData((prev) => ({
+          ...prev,
+          motorState: (message.data.motorState as ESP8266Data["motorState"]) ?? prev.motorState,
+          lastUpdate: message.timestamp,
+          esp8266Connected: true,
+        }));
+        break;
+      case "status":
+        setDeviceData((prev) => ({
+          ...prev,
+          feederConfig: (message.data.feederConfig as FeederConfig) ?? prev.feederConfig,
+          wifiRssi: (message.data.wifiRssi as number) ?? prev.wifiRssi,
+          lastUpdate: message.timestamp,
+          proxyConnected: true,
+          esp8266Connected: (message.data.connected as boolean) !== false,
+        }));
+        break;
+      case "error":
+        console.error("MQTT device error:", message.data);
+        break;
+    }
+  }, []);
+
   const {
     isConnected,
     isConnecting,
     error,
     connectionAttempts,
-    lastMessage,
-    connect: wsConnect,
-    disconnect: wsDisconnect,
-    sendCommand,
-    resetConnection: wsResetConnection,
-    connectionQuality,
-    latency,
-  } = useWebSocket(CLOUD_SERVER_URL);
+    brokerUrl,
+    connect: mqttConnect,
+    disconnect: mqttDisconnect,
+    publish,
+    resetConnection,
+  } = useMQTT(chipId, { onMessage: handleMessage });
+
+  useMountEffect(() => {
+    if (chipId) {
+      mqttConnect(chipId);
+    }
+
+    return () => {
+      mqttDisconnect();
+    };
+  });
+
+  const setChipId = useCallback((nextChipId: string | null) => {
+    setChipIdState(nextChipId);
+
+    if (nextChipId) {
+      AsyncStorage.setItem("floydChipId", nextChipId).catch(console.error);
+      mqttConnect(nextChipId);
+      return;
+    }
+
+    AsyncStorage.removeItem("floydChipId").catch(console.error);
+    mqttDisconnect();
+  }, [mqttConnect, mqttDisconnect]);
+
+  const publishCommand = useCallback((action: string, parameters?: object): boolean => {
+    return publish("command", {
+      action,
+      parameters,
+      timestamp: Date.now(),
+    });
+  }, [publish]);
 
   const requestSensorData = useCallback((): boolean => {
-    return sendCommand({
-      action: "get_sensors",
-    });
-  }, [sendCommand]);
+    return publishCommand("get_sensors");
+  }, [publishCommand]);
 
-  const startFeed = useCallback((params: {
-    augerSpeed: number;
-    impellerSpeed: number;
-    preSpinMs: number;
-    feedMs: number;
-    postSpinMs: number;
-  }) => {
+  const startFeed = useCallback((params: FeedParams) => {
     if (!isConnected) return;
-    sendCommand({
-      action: "start_feed",
-      parameters: {
-        augerSpeed: params.augerSpeed,
-        impellerSpeed: params.impellerSpeed,
-        preSpinMs: params.preSpinMs,
-        feedMs: params.feedMs,
-        postSpinMs: params.postSpinMs,
-      },
-    });
-  }, [isConnected, sendCommand]);
+    publishCommand("start_feed", params);
+  }, [isConnected, publishCommand]);
 
   const stopFeed = useCallback(() => {
     if (!isConnected) return;
-    sendCommand({ action: "stop_feed" });
-  }, [isConnected, sendCommand]);
+    publishCommand("stop_feed");
+  }, [isConnected, publishCommand]);
 
   const clearJam = useCallback((speed?: number, duration?: number) => {
     if (!isConnected) return;
-    sendCommand({
-      action: "clear_jam",
-      parameters: { speed: speed || 768, duration: duration || 2000 },
-    });
-  }, [isConnected, sendCommand]);
+    publishCommand("clear_jam", { speed: speed || 768, duration: duration || 2000 });
+  }, [isConnected, publishCommand]);
 
-  const setSensorReadingInterval = (interval: number): boolean => {
-    return sendCommand({
-      action: "set_sensor_interval",
-      parameters: { interval },
-    });
-  };
+  const setSensorReadingInterval = useCallback((interval: number): boolean => {
+    return publishCommand("set_sensor_interval", { interval });
+  }, [publishCommand]);
 
-  const connect = () => {
-    wsConnect();
-  };
+  const connect = useCallback(() => {
+    mqttConnect(chipId ?? undefined);
+  }, [chipId, mqttConnect]);
 
-  const disconnect = () => {
-    wsDisconnect();
-  };
-
-  const resetConnection = () => {
-    wsResetConnection();
-  };
+  const disconnect = useCallback(() => {
+    mqttDisconnect();
+  }, [mqttDisconnect]);
 
   const esp8266Status: "connected" | "disconnected" | "unknown" =
     deviceData.esp8266Connected === true
@@ -163,68 +214,18 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
       ? "disconnected"
       : "unknown";
 
-  // Process lastMessage via useMemo instead of useEffect for derived state
-  useMemo(() => {
-    if (!lastMessage) return;
-    switch (lastMessage.type) {
-      case "sensor_data":
-        setDeviceData((prev) => ({
-          ...prev,
-          temperature: (lastMessage.data.temperature as number) ?? prev.temperature,
-          distance: (lastMessage.data.distance as number) ?? prev.distance,
-          foodLevelPercentage: (lastMessage.data.foodLevelPercentage as number) ?? prev.foodLevelPercentage,
-          temperatureSensorConnected: (lastMessage.data.temperatureSensorConnected as boolean) ?? prev.temperatureSensorConnected,
-          ultrasonicSensorConnected: (lastMessage.data.ultrasonicSensorConnected as boolean) ?? prev.ultrasonicSensorConnected,
-          motorState: (lastMessage.data.motorState as ESP8266Data['motorState']) || 'idle',
-          augerSpeed: (lastMessage.data.augerSpeed as number) ?? prev.augerSpeed,
-          impellerSpeed: (lastMessage.data.impellerSpeed as number) ?? prev.impellerSpeed,
-          lastUpdate: lastMessage.timestamp,
-          proxyConnected: true,
-          esp8266Connected: (lastMessage.data.esp8266Connected as boolean) !== false,
-        }));
-        break;
-      case "control_response":
-        setDeviceData((prev) => ({
-          ...prev,
-          motorState: (lastMessage.data.motorState as ESP8266Data['motorState']) ?? prev.motorState,
-          lastUpdate: lastMessage.timestamp,
-        }));
-        break;
-      case "status":
-        setDeviceData((prev) => ({
-          ...prev,
-          feederConfig: (lastMessage.data.feederConfig as FeederConfig) ?? prev.feederConfig,
-          wifiRssi: (lastMessage.data.wifiRssi as number) ?? prev.wifiRssi,
-          lastUpdate: lastMessage.timestamp,
-          proxyConnected: true,
-          esp8266Connected: (lastMessage.data.esp8266Connected as boolean) !== false,
-        }));
-        break;
-      case "error":
-        console.error("Cloud Server Error:", lastMessage.data);
-        const errorMessage = lastMessage.data?.message;
-        if (
-          typeof errorMessage === "string" &&
-          errorMessage.includes("ESP8266")
-        ) {
-          setDeviceData((prev) => ({
-            ...prev,
-            esp8266Connected: false,
-          }));
-        }
-        break;
-    }
-  }, [lastMessage]);
-
-  const contextValue: ESP8266ContextType = {
+  const contextValue: ESP8266ContextType = useMemo(() => ({
     isConnected,
     isConnecting,
     error,
     connectionAttempts,
     deviceData,
+    chipId,
+    setChipId,
     connect,
     disconnect,
     resetConnection,
+    publishCommand,
     startFeed,
     stopFeed,
     clearJam,
@@ -235,10 +236,29 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     autoRefreshInterval,
     setAutoRefreshInterval,
     esp8266Status,
-    connectionQuality,
-    latency,
-    cloudServerUrl: CLOUD_SERVER_URL,
-  };
+    mqttBrokerUrl: brokerUrl,
+  }), [
+    isConnected,
+    isConnecting,
+    error,
+    connectionAttempts,
+    deviceData,
+    chipId,
+    setChipId,
+    connect,
+    disconnect,
+    resetConnection,
+    publishCommand,
+    startFeed,
+    stopFeed,
+    clearJam,
+    setSensorReadingInterval,
+    requestSensorData,
+    isAutoRefreshEnabled,
+    autoRefreshInterval,
+    esp8266Status,
+    brokerUrl,
+  ]);
 
   return (
     <ESP8266Context.Provider value={contextValue}>

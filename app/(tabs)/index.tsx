@@ -50,8 +50,6 @@ export default function DashboardScreen() {
     isConnecting,
     requestSensorData,
     esp8266Status,
-    connectionQuality,
-    latency,
   } = useESP8266();
 
   const { alerts, alertCount, hasHighSeverityAlerts, hasMediumSeverityAlerts } =
@@ -134,19 +132,19 @@ export default function DashboardScreen() {
     }
     if (esp8266Status === "connected") {
       return {
-        status: "Connected to Cloud",
+        status: "Connected to MQTT",
         color: colors.success,
         icon: "checkmark.circle.fill",
       };
     } else if (esp8266Status === "disconnected") {
       return {
-        status: "Cloud OK, ESP8266 Offline",
+        status: "MQTT OK, ESP8266 Offline",
         color: colors.warning,
         icon: "exclamationmark.triangle.fill",
       };
     }
     return {
-      status: "Cloud Connected",
+      status: "MQTT Connected",
       color: colors.success,
       icon: "checkmark.circle.fill",
     };
@@ -187,13 +185,6 @@ export default function DashboardScreen() {
                   label={connectionStatus.status}
                 />
               </View>
-              {isConnected && latency !== null && (
-                <View style={styles.latencyRow}>
-                  <Text style={[styles.latencyText, { color: colors.muted }]}>
-                    {latency}ms · {connectionQuality}
-                  </Text>
-                </View>
-              )}
             </View>
           </View>
           <TouchableOpacity
@@ -239,7 +230,7 @@ export default function DashboardScreen() {
 
         {isConnected && (
           <StatCard
-            title="Cloud Server Status"
+            title="MQTT Device Status"
             icon="globe"
             color={colors.secondary}
           >
@@ -251,7 +242,7 @@ export default function DashboardScreen() {
                   color={colors.success}
                 />
                 <Text style={[styles.statusText, { color: colors.text }]}>
-                  Cloud Server: Connected
+                  MQTT Broker: Connected
                 </Text>
               </View>
               <View style={styles.statusRow}>
@@ -285,7 +276,7 @@ export default function DashboardScreen() {
                   ]}
                 >
                   <Text style={[styles.helpText, { color: colors.text }]}>
-                    💡 The cloud server is working, but the ESP8266 hardware is
+                    The MQTT broker is working, but the ESP8266 hardware is
                     not responding. Check device power and WiFi connection.
                   </Text>
                 </View>

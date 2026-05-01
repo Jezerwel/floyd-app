@@ -1,6 +1,6 @@
 /**
  * Floyd Fish Feeder Server Types
- * TypeScript interfaces for WebSocket communication protocol
+ * TypeScript interfaces for device communication protocol
  */
 
 // Message Types sent from server to client
@@ -21,7 +21,7 @@ export type CommandAction =
   | "ping";
 
 /**
- * Base message interface for all WebSocket communications
+ * Base message interface for device communications
  */
 export interface BaseMessage {
   type: MessageType;
@@ -31,7 +31,7 @@ export interface BaseMessage {
 /**
  * Generic message with data payload
  */
-export interface WebSocketMessage<T = any> extends BaseMessage {
+export interface DeviceMessage<T = any> extends BaseMessage {
   data: T;
 }
 
@@ -133,27 +133,6 @@ export interface StatusResponse extends DeviceState {
 }
 
 /**
- * WebSocket client information
- */
-export interface ClientInfo {
-  id: string;
-  ip: string;
-  connectedAt: number;
-  lastPing?: number;
-}
-
-/**
- * ESP8266 connection configuration
- */
-export interface ESP8266Config {
-  host: string;
-  port: number;
-  reconnectDelay: number;
-  maxReconnectAttempts: number;
-  connectionTimeout: number;
-}
-
-/**
  * Server configuration
  */
 export interface ServerConfig {
@@ -161,7 +140,6 @@ export interface ServerConfig {
   sensorUpdateInterval: number;
   maxClients: number;
   feederConfig: FeederConfig;
-  esp8266Config: ESP8266Config;
 }
 
 /**
@@ -198,21 +176,16 @@ export const DEFAULT_FEEDER_CONFIG: FeederConfig = {
   defaultFeedMs: 3000,
 };
 
-export const DEFAULT_ESP8266_CONFIG: ESP8266Config = {
-  host: process.env.ESP8266_HOST || "172.31.5.134",
-  port: parseInt(process.env.ESP8266_PORT || "81", 10),
-  reconnectDelay: 3000,
-  maxReconnectAttempts: 5,
-  connectionTimeout: 10000,
-};
-
 export const DEFAULT_SERVER_CONFIG: ServerConfig = {
   port: parseInt(process.env.PORT || "3001", 10),
   sensorUpdateInterval: 5000,
   maxClients: 10,
   feederConfig: DEFAULT_FEEDER_CONFIG,
-  esp8266Config: DEFAULT_ESP8266_CONFIG,
 };
+
+export const MQTT_CONFIG = {
+  brokerUrl: process.env.MQTT_BROKER_URL || "mqtt://broker.hivemq.com:1883",
+} as const;
 
 export const SENSOR_INTERVAL_LIMITS = {
   min: 1000, // 1 second

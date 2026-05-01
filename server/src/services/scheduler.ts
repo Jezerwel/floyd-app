@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import prisma from './db';
-import { ESP8266Client } from './esp8266Client';
+import mqttHandler from './mqttClient';
 
 interface ScheduledFeed {
   id: string;
@@ -17,11 +17,6 @@ interface ScheduledFeed {
 
 class FeedScheduler {
   private jobs: Map<string, cron.ScheduledTask> = new Map();
-  private espClient: ESP8266Client;
-
-  constructor(espClient: ESP8266Client) {
-    this.espClient = espClient;
-  }
 
   async start() {
     console.log('[Scheduler] Loading schedules from database...');
@@ -34,7 +29,7 @@ class FeedScheduler {
     console.log(`[Scheduler] Loaded ${this.jobs.size} schedules`);
   }
 
-  addJob(schedule: ScheduledFeed) {
+  addJob(schedule: ScheduledFeed, deviceChipId?: string) {
     if (!schedule.enabled) return;
 
     const [hour, minute] = schedule.time.split(':').map(Number);
@@ -45,22 +40,24 @@ class FeedScheduler {
     const task = cron.schedule(cronExpr, async () => {
       console.log(`[Scheduler] Running scheduled feed: ${schedule.label}`);
 
-      if (!this.espClient.getStatus().isConnected) {
-        console.log(`[Scheduler] ESP8266 not connected, skipping feed: ${schedule.label}`);
+      const chipId = await this.getDeviceChipId(deviceChipId);
+
+      if (!chipId) {
+        console.log(`[Scheduler] No claimed device configured, skipping feed: ${schedule.label}`);
         await prisma.feedLog.create({
           data: {
             feedMs: schedule.feedMs,
             augerSpeed: schedule.augerSpeed,
             impellerSpeed: schedule.impellerSpeed,
             success: false,
-            errorMessage: 'ESP8266 not connected',
+            errorMessage: 'No claimed device configured',
           },
         });
         return;
       }
 
       try {
-        this.espClient.sendCommand({
+        await mqttHandler.publishDevice(chipId, 'command', {
           action: 'start_feed',
           parameters: {
             augerSpeed: schedule.augerSpeed,
@@ -69,15 +66,7 @@ class FeedScheduler {
             feedMs: schedule.feedMs,
             postSpinMs: schedule.postSpinMs,
           },
-        });
-
-        await prisma.feedLog.create({
-          data: {
-            feedMs: schedule.feedMs,
-            augerSpeed: schedule.augerSpeed,
-            impellerSpeed: schedule.impellerSpeed,
-            success: true,
-          },
+          timestamp: Date.now(),
         });
       } catch (err: any) {
         console.error(`[Scheduler] Feed failed: ${err.message}`);
@@ -94,6 +83,19 @@ class FeedScheduler {
     });
 
     this.jobs.set(schedule.id, task);
+  }
+
+  private async getDeviceChipId(deviceChipId?: string): Promise<string | null> {
+    if (deviceChipId) {
+      return deviceChipId;
+    }
+
+    const device = await prisma.device.findFirst({
+      orderBy: { claimedAt: 'desc' },
+      select: { chipId: true },
+    });
+
+    return device?.chipId ?? null;
   }
 
   removeJob(id: string) {
