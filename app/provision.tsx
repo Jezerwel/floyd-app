@@ -15,6 +15,7 @@ import { claimDevice } from "@/services/api";
 const ESP_AP_URL = "http://192.168.4.1";
 
 type ProvisioningStep = "provisioning" | "claiming" | "done" | "error";
+type ErrorKind = "webview" | "claim" | "no_device";
 
 interface ProvisioningMessage {
   type: "device-info-found" | "provisioning-complete" | "error";
@@ -76,34 +77,37 @@ const injectedJavaScript = `
 
 export default function ProvisionScreen() {
   const [step, setStep] = useState<ProvisioningStep>("provisioning");
+  const [errorKind, setErrorKind] = useState<ErrorKind>("webview");
   const [errorMsg, setErrorMsg] = useState("");
   const [deviceId, setDeviceId] = useState("");
   const [mqttPassword, setMqttPassword] = useState("");
-  const { setChipId } = useESP32();
+  const { isConnected, chipId, setChipId, publishCommand } = useESP32();
 
   const finishClaim = useCallback(async (data: ProvisioningMessage) => {
-    const chipId = data.chipId || deviceId;
+    const cId = data.chipId || deviceId;
     const password = data.mqttPassword || mqttPassword;
 
-    if (!chipId || !password) {
+    if (!cId || !password) {
       setStep("error");
+      setErrorKind("claim");
       setErrorMsg("Provisioning completed, but the device ID or MQTT password was missing.");
       return;
     }
 
     setStep("claiming");
-    const result = await claimDevice(chipId, data.deviceName || "Floyd Feeder", password);
+    const result = await claimDevice(cId, data.deviceName || "Floyd Feeder", password);
 
     if (!result.success) {
       setStep("error");
+      setErrorKind("claim");
       setErrorMsg(result.error || "Failed to claim device on the server.");
       return;
     }
 
     await AsyncStorage.setItem("floydMqttPassword", password);
-    setDeviceId(chipId);
+    setDeviceId(cId);
     setMqttPassword(password);
-    setChipId(chipId);
+    setChipId(cId);
     setStep("done");
   }, [deviceId, mqttPassword, setChipId]);
 
@@ -120,6 +124,7 @@ export default function ProvisionScreen() {
       if (data.type === "provisioning-complete") {
         finishClaim(data).catch((error) => {
           setStep("error");
+          setErrorKind("claim");
           setErrorMsg(error instanceof Error ? error.message : "Failed to claim device.");
         });
         return;
@@ -127,13 +132,34 @@ export default function ProvisionScreen() {
 
       if (data.type === "error") {
         setStep("error");
+        setErrorKind("webview");
         setErrorMsg(data.message || "Provisioning failed.");
       }
     } catch {
       setStep("error");
+      setErrorKind("webview");
       setErrorMsg("Failed to process provisioning data from the feeder.");
     }
   }, [finishClaim]);
+
+  const handleWebViewError = useCallback(() => {
+    setStep("error");
+    setErrorKind("webview");
+    setErrorMsg("Could not reach 192.168.4.1. Make sure your phone is connected to the FloydFeeder WiFi network.");
+  }, []);
+
+  const handleRestartProvisioning = useCallback(() => {
+    publishCommand("restart_provisioning");
+    setChipId(null);
+    AsyncStorage.removeItem("floydChipId").catch(console.error);
+    AsyncStorage.removeItem("floydMqttPassword").catch(console.error);
+    setStep("provisioning");
+    setErrorMsg("Restarting feeder in provisioning mode... Connect your phone to the FloydFeeder WiFi when it appears (may take ~10 seconds).");
+  }, [publishCommand, setChipId]);
+
+  const handleGoToDashboard = useCallback(() => {
+    router.replace("/(tabs)");
+  }, []);
 
   return (
     <View style={styles.container}>
@@ -150,10 +176,7 @@ export default function ProvisionScreen() {
             source={{ uri: ESP_AP_URL }}
             injectedJavaScript={injectedJavaScript}
             onMessage={handleMessage}
-            onError={() => {
-              setStep("error");
-              setErrorMsg("Could not reach 192.168.4.1. Make sure your phone is connected to the FloydFeeder WiFi network.");
-            }}
+            onError={handleWebViewError}
             javaScriptEnabled
             domStorageEnabled
             style={styles.webview}
@@ -173,7 +196,7 @@ export default function ProvisionScreen() {
         <View style={styles.centered}>
           <Text style={styles.title}>Device Connected</Text>
           <Text style={styles.body}>Device ID: {deviceId}</Text>
-          <TouchableOpacity style={styles.primaryButton} onPress={() => router.replace("/(tabs)")}>
+          <TouchableOpacity style={styles.primaryButton} onPress={handleGoToDashboard}>
             <Text style={styles.primaryButtonText}>Go to Dashboard</Text>
           </TouchableOpacity>
         </View>
@@ -183,9 +206,53 @@ export default function ProvisionScreen() {
         <View style={styles.centered}>
           <Text style={styles.title}>Setup Failed</Text>
           <Text style={styles.body}>{errorMsg}</Text>
-          <TouchableOpacity style={styles.primaryButton} onPress={() => setStep("provisioning")}>
-            <Text style={styles.primaryButtonText}>Try Again</Text>
-          </TouchableOpacity>
+
+          {errorKind === "webview" && isConnected && (
+            <View style={styles.errorActions}>
+              <Text style={styles.hint}>Your feeder is already online. To reconfigure it, factory reset below.</Text>
+              <TouchableOpacity style={styles.primaryButton} onPress={handleGoToDashboard}>
+                <Text style={styles.primaryButtonText}>Go to Dashboard</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.dangerButton} onPress={handleRestartProvisioning}>
+                <Text style={styles.dangerButtonText}>Factory Reset & Re-provision</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {errorKind === "webview" && !isConnected && chipId && (
+            <View style={styles.errorActions}>
+              <Text style={styles.hint}>This device is claimed but appears offline. You can restart it in provisioning mode.</Text>
+              <TouchableOpacity style={styles.dangerButton} onPress={handleRestartProvisioning}>
+                <Text style={styles.dangerButtonText}>Restart Provisioning Mode</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryButton} onPress={handleGoToDashboard}>
+                <Text style={styles.secondaryButtonText}>Back to Dashboard</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {errorKind === "webview" && !isConnected && !chipId && (
+            <TouchableOpacity style={styles.primaryButton} onPress={() => setStep("provisioning")}>
+              <Text style={styles.primaryButtonText}>Try Again</Text>
+            </TouchableOpacity>
+          )}
+
+          {errorKind === "claim" && (
+            <TouchableOpacity style={styles.primaryButton} onPress={() => setStep("provisioning")}>
+              <Text style={styles.primaryButtonText}>Try Again</Text>
+            </TouchableOpacity>
+          )}
+
+          {errorKind === "no_device" && (
+            <View style={styles.errorActions}>
+              <TouchableOpacity style={styles.primaryButton} onPress={() => setStep("provisioning")}>
+                <Text style={styles.primaryButtonText}>Check WiFi Connection</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.secondaryButton} onPress={handleGoToDashboard}>
+                <Text style={styles.secondaryButtonText}>Back to Dashboard</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
       )}
     </View>
@@ -231,13 +298,52 @@ const styles = StyleSheet.create({
     padding: 32,
     gap: 16,
   },
+  errorActions: {
+    gap: 12,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  hint: {
+    fontSize: 13,
+    color: "#888",
+    textAlign: "center",
+    maxWidth: 280,
+  },
   primaryButton: {
     backgroundColor: "#2e7d32",
     paddingHorizontal: 20,
     paddingVertical: 14,
     borderRadius: 12,
+    minWidth: 200,
+    alignItems: "center",
   },
   primaryButtonText: {
+    color: "#fff",
+    fontSize: 16,
+    fontWeight: "700",
+  },
+  secondaryButton: {
+    backgroundColor: "#f0f0f0",
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 12,
+    minWidth: 200,
+    alignItems: "center",
+  },
+  secondaryButtonText: {
+    color: "#555",
+    fontSize: 16,
+    fontWeight: "600",
+  },
+  dangerButton: {
+    backgroundColor: "#d32f2f",
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    borderRadius: 12,
+    minWidth: 200,
+    alignItems: "center",
+  },
+  dangerButtonText: {
     color: "#fff",
     fontSize: 16,
     fontWeight: "700",

@@ -1,7 +1,8 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { router } from "expo-router";
-import React from "react";
+import React, { useCallback } from "react";
 import {
   ActivityIndicator,
   StyleSheet,
@@ -23,6 +24,8 @@ const ESP32Connection: React.FC = () => {
     connect,
     disconnect,
     resetConnection,
+    publishCommand,
+    setChipId,
     mqttBrokerUrl,
   } = useESP32();
 
@@ -40,6 +43,13 @@ const ESP32Connection: React.FC = () => {
   const handleProvision = () => {
     router.push("/provision");
   };
+
+  const handleReconfigure = useCallback(() => {
+    publishCommand("restart_provisioning");
+    setChipId(null);
+    AsyncStorage.removeItem("floydMqttPassword").catch(console.error);
+    router.push("/provision");
+  }, [publishCommand, setChipId]);
 
   return (
     <View style={styles.container}>
@@ -192,6 +202,16 @@ const ESP32Connection: React.FC = () => {
                 <Text style={styles.actionButtonText}>Reconnect</Text>
               </TouchableOpacity>
             </View>
+
+            <TouchableOpacity
+              style={[styles.reconfigureButton, { borderColor: colors.muted }]}
+              onPress={handleReconfigure}
+              accessibilityRole="button"
+              accessibilityLabel="Reconfigure feeder WiFi"
+            >
+              <IconSymbol name="gear" size={14} color={colors.muted} />
+              <Text style={[styles.reconfigureText, { color: colors.muted }]}>Reconfigure Device</Text>
+            </TouchableOpacity>
           </View>
         </StatCard>
       )}
@@ -296,6 +316,21 @@ const styles = StyleSheet.create({
     color: "white",
     fontSize: 14,
     fontWeight: "600",
+  },
+  reconfigureButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 4,
+  },
+  reconfigureText: {
+    fontSize: 12,
+    fontWeight: "500",
   },
   troubleshootingContainer: {
     marginTop: 12,
