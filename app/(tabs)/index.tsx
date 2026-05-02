@@ -1,4 +1,4 @@
-import ESP8266Connection from "@/components/ESP8266Connection";
+import ESP32Connection from "@/components/ESP32Connection";
 import { AlertItem } from "@/components/ui/AlertItem";
 import { AnimatedPercentage } from "@/components/ui/AnimatedValue";
 import { CircularProgress } from "@/components/ui/CircularProgress";
@@ -9,7 +9,7 @@ import { StatCard } from "@/components/ui/StatCard";
 import { Colors } from "@/constants/Colors";
 import useAlerts from "@/hooks/useAlerts";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { useESP8266 } from "@/hooks/useESP8266Context";
+import { useESP32 } from "@/hooks/useESP32Context";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -49,8 +49,8 @@ export default function DashboardScreen() {
     isConnected,
     isConnecting,
     requestSensorData,
-    esp8266Status,
-  } = useESP8266();
+    esp32Status,
+  } = useESP32();
 
   const { alerts, alertCount, hasHighSeverityAlerts, hasMediumSeverityAlerts } =
     useAlerts();
@@ -130,13 +130,13 @@ export default function DashboardScreen() {
         icon: "xmark.circle.fill",
       };
     }
-    if (esp8266Status === "connected") {
+    if (esp32Status === "connected") {
       return {
         status: "Online",
         color: colors.success,
         icon: "checkmark.circle.fill",
       };
-    } else if (esp8266Status === "disconnected") {
+    } else if (esp32Status === "disconnected") {
       return {
         status: "Cloud online, feeder offline",
         color: colors.warning,
@@ -148,7 +148,7 @@ export default function DashboardScreen() {
       color: colors.success,
       icon: "checkmark.circle.fill",
     };
-  }, [isConnected, esp8266Status, colors]);
+  }, [isConnected, esp32Status, colors]);
 
   const motorState = deviceData.motorState ?? "idle";
   const motorConfig = MOTOR_STATE_CONFIG[motorState] ?? MOTOR_STATE_CONFIG.idle;
@@ -218,7 +218,7 @@ export default function DashboardScreen() {
           />
         }
       >
-        <ESP8266Connection />
+        <ESP32Connection />
 
         {isConnecting && !isConnected && (
           <>
@@ -248,27 +248,27 @@ export default function DashboardScreen() {
             <View style={styles.statusRow}>
               <IconSymbol
                 name={
-                  esp8266Status === "connected"
+                  esp32Status === "connected"
                     ? "checkmark.circle.fill"
                     : "xmark.circle.fill"
                 }
                 size={16}
                 color={
-                  esp8266Status === "connected"
+                  esp32Status === "connected"
                     ? colors.success
                     : colors.error
                 }
               />
               <Text style={[styles.statusText, { color: colors.text }]}>
                 Feeder:{" "}
-                {esp8266Status === "connected"
+                {esp32Status === "connected"
                   ? "Online"
-                  : esp8266Status === "disconnected"
+                  : esp32Status === "disconnected"
                   ? "Offline"
                   : "Unknown"}
               </Text>
             </View>
-            {esp8266Status === "disconnected" && (
+            {esp32Status === "disconnected" && (
               <View
                 style={[
                   styles.helpBox,

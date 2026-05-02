@@ -13,7 +13,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import "react-native-reanimated";
 
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { ESP8266Provider } from "@/hooks/useESP8266Context";
+import { ESP32Provider } from "@/hooks/useESP32Context";
 import { useMountEffect } from "@/hooks/useMountEffect";
 
 SplashScreen.preventAutoHideAsync();
@@ -70,7 +70,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <SplashHider />
-      <ESP8266Provider initialChipId={storedDevice.chipId}>
+      <ESP32Provider initialChipId={storedDevice.chipId}>
         <ThemeProvider
           value={colorScheme === "light" ? DefaultTheme : DarkTheme}
         >
@@ -80,7 +80,7 @@ export default function RootLayout() {
           </Stack>
           <StatusBar style="auto" />
         </ThemeProvider>
-      </ESP8266Provider>
+      </ESP32Provider>
     </GestureHandlerRootView>
   );
 }

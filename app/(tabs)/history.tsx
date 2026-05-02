@@ -3,7 +3,7 @@ import { StatCard } from "@/components/ui/StatCard";
 import { Colors } from "@/constants/Colors";
 import useAlerts from "@/hooks/useAlerts";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { useESP8266 } from "@/hooks/useESP8266Context";
+import { useESP32 } from "@/hooks/useESP32Context";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useEffect, useState } from "react";
 import {
@@ -50,7 +50,7 @@ interface SensorLogEntry {
 export default function LogsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? "light"];
-  const { deviceData, isConnected } = useESP8266();
+  const { deviceData, isConnected } = useESP32();
   const { alerts } = useAlerts();
 
   const [sensorLogs, setSensorLogs] = useState<SensorLogEntry[]>([]);

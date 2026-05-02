@@ -9,7 +9,7 @@ import {
   View,
 } from "react-native";
 import { WebView, WebViewMessageEvent } from "react-native-webview";
-import { useESP8266 } from "@/hooks/useESP8266Context";
+import { useESP32 } from "@/hooks/useESP32Context";
 import { claimDevice } from "@/services/api";
 
 const ESP_AP_URL = "http://192.168.4.1";
@@ -79,7 +79,7 @@ export default function ProvisionScreen() {
   const [errorMsg, setErrorMsg] = useState("");
   const [deviceId, setDeviceId] = useState("");
   const [mqttPassword, setMqttPassword] = useState("");
-  const { setChipId } = useESP8266();
+  const { setChipId } = useESP32();
 
   const finishClaim = useCallback(async (data: ProvisioningMessage) => {
     const chipId = data.chipId || deviceId;

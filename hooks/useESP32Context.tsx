@@ -22,7 +22,7 @@ interface FeederConfig {
   defaultFeedMs: number;
 }
 
-interface ESP8266Data {
+interface ESP32Data {
   temperature?: number;
   temperatureSensorConnected?: boolean;
   ultrasonicSensorConnected?: boolean;
@@ -34,7 +34,7 @@ interface ESP8266Data {
   wifiRssi?: number;
   feederConfig?: FeederConfig;
   lastUpdate?: number;
-  esp8266Connected?: boolean;
+  esp32Connected?: boolean;
   proxyConnected?: boolean;
 }
 
@@ -46,12 +46,12 @@ interface FeedParams {
   postSpinMs: number;
 }
 
-interface ESP8266ContextType {
+interface ESP32ContextType {
   isConnected: boolean;
   isConnecting: boolean;
   error: string | null;
   connectionAttempts: number;
-  deviceData: ESP8266Data;
+  deviceData: ESP32Data;
   chipId: string | null;
   setChipId: (chipId: string | null) => void;
   connect: () => void;
@@ -67,25 +67,25 @@ interface ESP8266ContextType {
   setAutoRefreshEnabled: (enabled: boolean) => void;
   autoRefreshInterval: number;
   setAutoRefreshInterval: (interval: number) => void;
-  esp8266Status: "connected" | "disconnected" | "unknown";
+  esp32Status: "connected" | "disconnected" | "unknown";
   mqttBrokerUrl: string;
 }
 
-const ESP8266Context = createContext<ESP8266ContextType | null>(null);
+const ESP32Context = createContext<ESP32ContextType | null>(null);
 
 const DEFAULT_AUTO_REFRESH_INTERVAL = 10000;
 
-interface ESP8266ProviderProps {
+interface ESP32ProviderProps {
   children: ReactNode;
   initialChipId?: string | null;
 }
 
-export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
+export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   children,
   initialChipId = null,
 }) => {
   const [chipId, setChipIdState] = useState<string | null>(initialChipId);
-  const [deviceData, setDeviceData] = useState<ESP8266Data>({});
+  const [deviceData, setDeviceData] = useState<ESP32Data>({});
   const [isAutoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   const [autoRefreshInterval, setAutoRefreshInterval] = useState(
     DEFAULT_AUTO_REFRESH_INTERVAL
@@ -101,20 +101,20 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
           foodLevelPercentage: (message.data.foodLevelPercentage as number) ?? prev.foodLevelPercentage,
           temperatureSensorConnected: (message.data.temperatureSensorConnected as boolean) ?? prev.temperatureSensorConnected,
           ultrasonicSensorConnected: (message.data.ultrasonicSensorConnected as boolean) ?? prev.ultrasonicSensorConnected,
-          motorState: (message.data.motorState as ESP8266Data["motorState"]) || prev.motorState || "idle",
+          motorState: (message.data.motorState as ESP32Data["motorState"]) || prev.motorState || "idle",
           augerSpeed: (message.data.augerSpeed as number) ?? prev.augerSpeed,
           impellerSpeed: (message.data.impellerSpeed as number) ?? prev.impellerSpeed,
           lastUpdate: message.timestamp,
           proxyConnected: true,
-          esp8266Connected: true,
+          esp32Connected: true,
         }));
         break;
       case "control_response":
         setDeviceData((prev) => ({
           ...prev,
-          motorState: (message.data.motorState as ESP8266Data["motorState"]) ?? prev.motorState,
+          motorState: (message.data.motorState as ESP32Data["motorState"]) ?? prev.motorState,
           lastUpdate: message.timestamp,
-          esp8266Connected: true,
+          esp32Connected: true,
         }));
         break;
       case "status":
@@ -124,7 +124,7 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
           wifiRssi: (message.data.wifiRssi as number) ?? prev.wifiRssi,
           lastUpdate: message.timestamp,
           proxyConnected: true,
-          esp8266Connected: (message.data.connected as boolean) !== false,
+          esp32Connected: (message.data.connected as boolean) !== false,
         }));
         break;
       case "error":
@@ -207,14 +207,14 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     mqttDisconnect();
   }, [mqttDisconnect]);
 
-  const esp8266Status: "connected" | "disconnected" | "unknown" =
-    deviceData.esp8266Connected === true
+  const esp32Status: "connected" | "disconnected" | "unknown" =
+    deviceData.esp32Connected === true
       ? "connected"
-      : deviceData.esp8266Connected === false
+      : deviceData.esp32Connected === false
       ? "disconnected"
       : "unknown";
 
-  const contextValue: ESP8266ContextType = useMemo(() => ({
+  const contextValue: ESP32ContextType = useMemo(() => ({
     isConnected,
     isConnecting,
     error,
@@ -235,7 +235,7 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     setAutoRefreshEnabled,
     autoRefreshInterval,
     setAutoRefreshInterval,
-    esp8266Status,
+    esp32Status,
     mqttBrokerUrl: brokerUrl,
   }), [
     isConnected,
@@ -256,23 +256,23 @@ export const ESP8266Provider: React.FC<ESP8266ProviderProps> = ({
     requestSensorData,
     isAutoRefreshEnabled,
     autoRefreshInterval,
-    esp8266Status,
+    esp32Status,
     brokerUrl,
   ]);
 
   return (
-    <ESP8266Context.Provider value={contextValue}>
+    <ESP32Context.Provider value={contextValue}>
       {children}
-    </ESP8266Context.Provider>
+    </ESP32Context.Provider>
   );
 };
 
-export const useESP8266 = (): ESP8266ContextType => {
-  const context = useContext(ESP8266Context);
+export const useESP32 = (): ESP32ContextType => {
+  const context = useContext(ESP32Context);
   if (!context) {
-    throw new Error("useESP8266 must be used within an ESP8266Provider");
+    throw new Error("useESP32 must be used within an ESP32Provider");
   }
   return context;
 };
 
-export default ESP8266Context;
+export default ESP32Context;

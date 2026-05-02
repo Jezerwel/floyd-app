@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useESP8266 } from "./useESP8266Context";
+import { useESP32 } from "./useESP32Context";
 
 export interface Alert {
   id: string;
@@ -150,7 +150,7 @@ const getRelativeTime = (timestamp: string): string => {
 };
 
 const useAlerts = () => {
-  const { deviceData, isConnected } = useESP8266();
+  const { deviceData, isConnected } = useESP32();
 
   // Use configurable thresholds with defaults
   const thresholds = DEFAULT_THRESHOLDS;

@@ -2,7 +2,7 @@ import { IconSymbol } from "@/components/ui/IconSymbol";
 import { StatCard } from "@/components/ui/StatCard";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { useESP8266 } from "@/hooks/useESP8266Context";
+import { useESP32 } from "@/hooks/useESP32Context";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useState } from "react";
 import {
@@ -83,11 +83,11 @@ export default function ControlsScreen() {
   const {
     isConnected,
     deviceData,
-    esp8266Status,
+    esp32Status,
     startFeed,
     stopFeed,
     clearJam,
-  } = useESP8266();
+  } = useESP32();
 
   const [augerSpeed, setAugerSpeed] = useState(75);
   const [impellerSpeed, setImpellerSpeed] = useState(100);
@@ -107,7 +107,7 @@ export default function ControlsScreen() {
       Alert.alert("Offline", "Not connected to cloud server.");
       return;
     }
-    if (esp8266Status !== "connected") {
+    if (esp32Status !== "connected") {
       Alert.alert(
         "Feeder Not Available",
         "Connected to cloud, but the feeder is offline."
@@ -146,7 +146,7 @@ export default function ControlsScreen() {
     );
   };
 
-  const hardwareOffline = isConnected && esp8266Status !== "connected";
+  const hardwareOffline = isConnected && esp32Status !== "connected";
 
   return (
     <SafeAreaView

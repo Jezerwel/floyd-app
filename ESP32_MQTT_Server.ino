@@ -1,12 +1,12 @@
 // Floyd Feeder v2 — L298N Motor Driver Firmware
-// ESP8266 MQTT client controlling auger + impeller via L298N
-#include <ESP8266WiFi.h>
+// ESP32 MQTT client controlling auger + impeller via L298N
+#include <WiFi.h>
 #include <PubSubClient.h>
 #include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 #include <ArduinoJson.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
+// #include <OneWire.h>          // DS18B20 not available
+// #include <DallasTemperature.h> // DS18B20 not available
 #include <EEPROM.h>
 
 char savedSSID[33] = "";
@@ -14,7 +14,7 @@ char savedPassword[65] = "";
 char savedMqttBroker[64] = "4db1d3fef94e4b7d9600811e579488e7.s1.eu.hivemq.cloud";
 char savedMqttUsername[33] = "floyd-server";
 
-String deviceChipId = String(ESP.getChipId(), HEX);
+String deviceChipId = String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), HEX);
 String mqttPassword = "@@Feedfrendz11@@";
 String mqttClientId = "floyd-" + deviceChipId;
 String topicCommand;
@@ -25,28 +25,28 @@ String pendingCommandPayload = "";
 String pendingResponse = "";
 volatile bool pendingCommand = false;
 
-BearSSL::WiFiClientSecure wifiClient;
+WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
 
 // === Pin Definitions ===
 
 // L298N Motor Driver
-#define MOTOR_A_ENA    D5   // GPIO14 — Auger PWM (speed 0-1023)
-#define MOTOR_A_IN1    D6   // GPIO12 — Auger Direction 1
-#define MOTOR_A_IN2    D7   // GPIO13 — Auger Direction 2
-#define MOTOR_B_ENB    D3   // GPIO0  — Impeller PWM (speed 0-1023)
-#define MOTOR_B_IN3    D8   // GPIO15 — Impeller Direction 3
-#define MOTOR_B_IN4    D0   // GPIO16 — Impeller Direction 4
+#define MOTOR_A_ENA    14   // GPIO14 — Auger PWM (speed 0-1023)
+#define MOTOR_A_IN1    12   // GPIO12 — Auger Direction 1
+#define MOTOR_A_IN2    13   // GPIO13 — Auger Direction 2
+#define MOTOR_B_ENB    0    // GPIO0  — Impeller PWM (speed 0-1023)
+#define MOTOR_B_IN3    15   // GPIO15 — Impeller Direction 3
+#define MOTOR_B_IN4    16   // GPIO16 — Impeller Direction 4
 
-// HC-SR04 Ultrasonic
-#define TRIG_PIN       D1   // GPIO5
-#define ECHO_PIN       D2   // GPIO4
+// // HC-SR04 Ultrasonic — not available
+// #define TRIG_PIN       5    // GPIO5
+// #define ECHO_PIN       4    // GPIO4
 
-// DS18B20 Temperature
-#define ONE_WIRE_BUS   D4   // GPIO2
+// // DS18B20 Temperature — not available
+// #define ONE_WIRE_BUS   2    // GPIO2
 
-OneWire oneWire(ONE_WIRE_BUS);
-DallasTemperature temperatureSensor(&oneWire);
+// OneWire oneWire(ONE_WIRE_BUS);
+// DallasTemperature temperatureSensor(&oneWire);
 
 // === Feeding Sequence Configuration ===
 // All durations in milliseconds — easily editable
@@ -115,11 +115,11 @@ MotorControl motor;
 
 // === Sensor Data ===
 struct SensorData {
-  float temperature;
-  bool temperatureSensorConnected;
-  float distance;
+  // float temperature;                    // DS18B20 — not available
+  // bool temperatureSensorConnected;       // DS18B20 — not available
+  // float distance;                        // HC-SR04 — not available
   float foodLevelPercentage;
-  bool ultrasonicSensorConnected;
+  // bool ultrasonicSensorConnected;        // HC-SR04 — not available
 } sensors;
 
 // ============================================================
@@ -346,7 +346,7 @@ void connectToWiFi() {
     delay(500);
     Serial.print(".");
     attempts++;
-    ESP.wdtFeed();
+    yield();
   }
 
   if (WiFi.status() == WL_CONNECTED) {
@@ -377,10 +377,10 @@ void checkWiFiConnection() {
 
         WiFi.disconnect();
         delay(100);
-        ESP.wdtFeed();
+        yield();
         WiFi.begin(savedSSID, savedPassword);
       } else {
-        Serial.println("Max WiFi reconnection attempts reached. Restarting ESP8266...");
+        Serial.println("Max WiFi reconnection attempts reached. Restarting ESP32...");
         ESP.restart();
       }
     } else {
@@ -596,89 +596,80 @@ float calculateFoodLevel(float distanceCm) {
 //  Sensors
 // ============================================================
 
-float readUltrasonicDistance() {
-  float validReadings[3];
-  int validCount = 0;
-
-  for (int i = 0; i < 3; i++) {
-    digitalWrite(TRIG_PIN, LOW);
-    delayMicroseconds(2);
-
-    digitalWrite(TRIG_PIN, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(TRIG_PIN, LOW);
-
-    unsigned long duration = pulseIn(ECHO_PIN, HIGH, 30000);
-
-    if (duration > 0) {
-      float distance = (duration * 0.0343) / 2;
-
-      if (distance >= 1.0 && distance <= 400.0) {
-        validReadings[validCount] = distance;
-        validCount++;
-      }
-    }
-
-    delay(10);
-    ESP.wdtFeed();
-  }
-
-  if (validCount == 0) {
-    sensors.ultrasonicSensorConnected = false;
-    return NAN;
-  }
-
-  sensors.ultrasonicSensorConnected = true;
-
-  float sum = 0;
-  for (int i = 0; i < validCount; i++) {
-    sum += validReadings[i];
-  }
-
-  return sum / validCount;
-}
+// // HC-SR04 Ultrasonic — not available
+// float readUltrasonicDistance() {
+//   float validReadings[3];
+//   int validCount = 0;
+//
+//   for (int i = 0; i < 3; i++) {
+//     digitalWrite(TRIG_PIN, LOW);
+//     delayMicroseconds(2);
+//
+//     digitalWrite(TRIG_PIN, HIGH);
+//     delayMicroseconds(10);
+//     digitalWrite(TRIG_PIN, LOW);
+//
+//     unsigned long duration = pulseIn(ECHO_PIN, HIGH, 30000);
+//
+//     if (duration > 0) {
+//       float distance = (duration * 0.0343) / 2;
+//
+//       if (distance >= 1.0 && distance <= 400.0) {
+//         validReadings[validCount] = distance;
+//         validCount++;
+//       }
+//     }
+//
+//     delay(10);
+//     yield();
+//   }
+//
+//   if (validCount == 0) {
+//     sensors.ultrasonicSensorConnected = false;
+//     return NAN;
+//   }
+//
+//   sensors.ultrasonicSensorConnected = true;
+//
+//   float sum = 0;
+//   for (int i = 0; i < validCount; i++) {
+//     sum += validReadings[i];
+//   }
+//
+//   return sum / validCount;
+// }
 
 SensorData readSensors() {
-  ESP.wdtFeed();
+  yield();
 
-  // Temperature
-  if (sensors.temperatureSensorConnected) {
-    temperatureSensor.requestTemperatures();
-    sensors.temperature = temperatureSensor.getTempCByIndex(0);
+  // // Temperature — DS18B20 not available
+  // if (sensors.temperatureSensorConnected) {
+  //   temperatureSensor.requestTemperatures();
+  //   sensors.temperature = temperatureSensor.getTempCByIndex(0);
+  //
+  //   if (sensors.temperature == DEVICE_DISCONNECTED_C || sensors.temperature < -40 || sensors.temperature > 85) {
+  //     Serial.println("Error: DS18B20 sensor disconnected or invalid reading");
+  //     sensors.temperature = NAN;
+  //     sensors.temperatureSensorConnected = false;
+  //   }
+  // } else {
+  //   sensors.temperature = NAN;
+  // }
 
-    if (sensors.temperature == DEVICE_DISCONNECTED_C || sensors.temperature < -40 || sensors.temperature > 85) {
-      Serial.println("Error: DS18B20 sensor disconnected or invalid reading");
-      sensors.temperature = NAN;
-      sensors.temperatureSensorConnected = false;
-    }
-  } else {
-    sensors.temperature = NAN;
-  }
+  // // Distance — HC-SR04 not available
+  // sensors.distance = readUltrasonicDistance();
+  //
+  // // Food level — volume-based calculation
+  // if (sensors.ultrasonicSensorConnected && !isnan(sensors.distance)) {
+  //   sensors.foodLevelPercentage = calculateFoodLevel(sensors.distance);
+  // } else {
+  //   sensors.foodLevelPercentage = 0;
+  // }
 
-  // Distance
-  sensors.distance = readUltrasonicDistance();
+  sensors.foodLevelPercentage = 0;
 
-  // Food level — volume-based calculation
-  if (sensors.ultrasonicSensorConnected && !isnan(sensors.distance)) {
-    sensors.foodLevelPercentage = calculateFoodLevel(sensors.distance);
-  } else {
-    sensors.foodLevelPercentage = 0;
-  }
-
-  Serial.println("--- Sensor Readings ---");
-  if (!isnan(sensors.temperature)) {
-    Serial.println("Temp: " + String(sensors.temperature, 1) + " C");
-  } else {
-    Serial.println("Temp: Error");
-  }
-
-  if (!isnan(sensors.distance)) {
-    Serial.println("Distance: " + String(sensors.distance, 1) + " cm");
-    Serial.println("Food: " + String(sensors.foodLevelPercentage, 1) + " %");
-  } else {
-    Serial.println("Distance: Error");
-  }
-
+  Serial.println("--- Device Status ---");
+  Serial.println("Food: 0% (sensors not available)");
   Serial.println("Motor: " + String(motor.state));
   Serial.println("Free Heap: " + String(ESP.getFreeHeap()) + " bytes");
   Serial.println("----------------------");
@@ -702,17 +693,18 @@ void broadcastSensorData() {
   doc["type"] = "sensor_data";
   JsonObject data = doc.createNestedObject("data");
 
-  if (!isnan(sensors.temperature) && sensors.temperatureSensorConnected) {
-    data["temperature"] = round(sensors.temperature * 10) / 10.0;
-  }
+  // // Temperature — DS18B20 not available
+  // if (!isnan(sensors.temperature) && sensors.temperatureSensorConnected) {
+  //   data["temperature"] = round(sensors.temperature * 10) / 10.0;
+  // }
 
-  if (!isnan(sensors.distance) && sensors.ultrasonicSensorConnected) {
-    data["distance"] = round(sensors.distance * 10) / 10.0;
-    data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
-  }
+  // // Distance & food level — HC-SR04 not available
+  // if (!isnan(sensors.distance) && sensors.ultrasonicSensorConnected) {
+  //   data["distance"] = round(sensors.distance * 10) / 10.0;
+  //   data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
+  // }
 
-  data["temperatureSensorConnected"] = sensors.temperatureSensorConnected;
-  data["ultrasonicSensorConnected"] = sensors.ultrasonicSensorConnected;
+  data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
 
   // Motor state
   data["motorState"] = motor.state == STATE_IDLE ? "idle" :
@@ -738,17 +730,18 @@ void sendSensorData(uint8_t num) {
   doc["type"] = "sensor_data";
   JsonObject data = doc.createNestedObject("data");
 
-  if (!isnan(sensors.temperature) && sensors.temperatureSensorConnected) {
-    data["temperature"] = round(sensors.temperature * 10) / 10.0;
-  }
+  // // Temperature — DS18B20 not available
+  // if (!isnan(sensors.temperature) && sensors.temperatureSensorConnected) {
+  //   data["temperature"] = round(sensors.temperature * 10) / 10.0;
+  // }
 
-  if (!isnan(sensors.distance) && sensors.ultrasonicSensorConnected) {
-    data["distance"] = round(sensors.distance * 10) / 10.0;
-    data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
-  }
+  // // Distance & food level — HC-SR04 not available
+  // if (!isnan(sensors.distance) && sensors.ultrasonicSensorConnected) {
+  //   data["distance"] = round(sensors.distance * 10) / 10.0;
+  //   data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
+  // }
 
-  data["temperatureSensorConnected"] = sensors.temperatureSensorConnected;
-  data["ultrasonicSensorConnected"] = sensors.ultrasonicSensorConnected;
+  data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
 
   data["motorState"] = motor.state == STATE_IDLE ? "idle" :
                         motor.state == STATE_PRE_SPIN ? "pre_spin" :
@@ -794,17 +787,7 @@ void sendDeviceStatus(uint8_t num) {
   config["defaultPostSpinMs"] = DEFAULT_POST_SPIN_MS;
   config["defaultFeedMs"] = DEFAULT_FEED_MS;
 
-  if (!isnan(sensors.temperature) && sensors.temperatureSensorConnected) {
-    data["temperature"] = round(sensors.temperature * 10) / 10.0;
-  }
-
-  if (!isnan(sensors.distance) && sensors.ultrasonicSensorConnected) {
-    data["distance"] = round(sensors.distance * 10) / 10.0;
-    data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
-  }
-
-  data["temperatureSensorConnected"] = sensors.temperatureSensorConnected;
-  data["ultrasonicSensorConnected"] = sensors.ultrasonicSensorConnected;
+  data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10) / 10.0;
 
   doc["timestamp"] = millis();
 
@@ -980,14 +963,14 @@ void setup() {
   Serial.begin(115200);
   delay(100);
 
-  Serial.println("\n=== Floyd Fish Feeder v2 — L298N Motor Driver ===");
+  Serial.println("\n=== Floyd Fish Feeder v2 — L298N Motor Driver (ESP32) ===");
   Serial.println("Pin Layout:");
-  Serial.println("  L298N Auger: D5(ENA) D6(IN1) D7(IN2)");
-  Serial.println("  L298N Impeller: D3(ENB) D8(IN3) D0(IN4)");
-  Serial.println("  DS18B20 Temp: D4 (GPIO2)");
-  Serial.println("  Ultrasonic TRIG: D1 (GPIO5)");
-  Serial.println("  Ultrasonic ECHO: D2 (GPIO4)");
+  Serial.println("  L298N Auger: GPIO14(ENA) GPIO12(IN1) GPIO13(IN2)");
+  Serial.println("  L298N Impeller: GPIO0(ENB) GPIO15(IN3) GPIO16(IN4)");
   Serial.println("========================================\n");
+
+  // Set analogWrite resolution to match ESP8266 range (0-1023)
+  analogWriteResolution(10);
 
   // Initialize motor driver pins
   pinMode(MOTOR_A_ENA, OUTPUT);
@@ -998,27 +981,27 @@ void setup() {
   pinMode(MOTOR_B_IN4, OUTPUT);
   stopAllMotors();
 
-  // Initialize ultrasonic pins
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-  digitalWrite(TRIG_PIN, LOW);
+  // // Initialize ultrasonic pins — not available
+  // pinMode(TRIG_PIN, OUTPUT);
+  // pinMode(ECHO_PIN, INPUT);
+  // digitalWrite(TRIG_PIN, LOW);
 
-  // Initialize DS18B20
-  temperatureSensor.begin();
-
-  int deviceCount = temperatureSensor.getDeviceCount();
-  Serial.println("Found " + String(deviceCount) + " DS18B20 device(s)");
-
-  if (deviceCount == 0) {
-    Serial.println("Warning: No DS18B20 temperature sensor found!");
-    sensors.temperatureSensorConnected = false;
-  } else {
-    sensors.temperatureSensorConnected = true;
-    Serial.println("DS18B20 temperature sensor initialized successfully");
-  }
-
-  sensors.ultrasonicSensorConnected = true;
-  Serial.println("HC-SR04 ultrasonic sensor initialized");
+  // // Initialize DS18B20 — not available
+  // temperatureSensor.begin();
+  //
+  // int deviceCount = temperatureSensor.getDeviceCount();
+  // Serial.println("Found " + String(deviceCount) + " DS18B20 device(s)");
+  //
+  // if (deviceCount == 0) {
+  //   Serial.println("Warning: No DS18B20 temperature sensor found!");
+  //   sensors.temperatureSensorConnected = false;
+  // } else {
+  //   sensors.temperatureSensorConnected = true;
+  //   Serial.println("DS18B20 temperature sensor initialized successfully");
+  // }
+  //
+  // sensors.ultrasonicSensorConnected = true;
+  // Serial.println("HC-SR04 ultrasonic sensor initialized");
 
   setupMQTTTopics();
 
@@ -1044,7 +1027,7 @@ void setup() {
 }
 
 void loop() {
-  ESP.wdtFeed();
+  yield();
 
   checkWiFiConnection();
   checkMQTTConnection();

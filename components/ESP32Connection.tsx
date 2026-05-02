@@ -9,11 +9,11 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { useESP8266 } from "../hooks/useESP8266Context";
+import { useESP32 } from "../hooks/useESP32Context";
 import { IconSymbol } from "./ui/IconSymbol";
 import { StatCard } from "./ui/StatCard";
 
-const ESP8266Connection: React.FC = () => {
+const ESP32Connection: React.FC = () => {
   const {
     isConnected,
     isConnecting,
@@ -24,7 +24,7 @@ const ESP8266Connection: React.FC = () => {
     disconnect,
     resetConnection,
     mqttBrokerUrl,
-  } = useESP8266();
+  } = useESP32();
 
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme === "dark" ? "dark" : "light"];
@@ -314,4 +314,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default ESP8266Connection;
+export default ESP32Connection;
