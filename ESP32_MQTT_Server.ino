@@ -132,26 +132,9 @@ void loadConfig() {
     prefs.getBytes(PREFS_KEY_CFG, &cfg, sizeof(AppConfig));
     Serial.println("Loaded config from NVS");
   } else {
-    Serial.print("No valid config in NVS (got ");
-    Serial.print(len);
-    Serial.print(" bytes, expected ");
-    Serial.print(sizeof(AppConfig));
-    Serial.println("), using defaults");
+    Serial.println("No valid config in NVS, using defaults");
   }
   prefs.end();
-
-  // === DIAGNOSTIC: dump loaded credentials ===
-  Serial.println("--- CREDS DIAG ---");
-  Serial.print("  ssid="); Serial.println(cfg.wifiSSID);
-  Serial.print("  broker="); Serial.println(cfg.mqttBroker);
-  Serial.print("  user="); Serial.println(cfg.mqttUsername);
-  Serial.print("  pass_len="); Serial.println(strlen(cfg.mqttPassword));
-  Serial.print("  pass[0..3]=");
-  for (int i = 0; i < min(strlen(cfg.mqttPassword), (size_t)4); i++)
-    Serial.print(cfg.mqttPassword[i]);
-  Serial.println();
-  Serial.print("  provisioned="); Serial.println(cfg.provisioned);
-  Serial.println("------------------");
 }
 
 void saveConfig() {
@@ -347,14 +330,6 @@ void connectMQTT() {
 
   wifiClient.setInsecure();
   wifiClient.setTimeout(5000);
-
-  // === DIAGNOSTIC: show what we're connecting with ===
-  Serial.print("MQTT connecting: clientId="); Serial.print(mqttClientId);
-  Serial.print(" broker="); Serial.print(cfg.mqttBroker);
-  Serial.print(":8883 user=");
-  Serial.print(cfg.mqttUsername[0] ? cfg.mqttUsername : "(null)");
-  Serial.print(" pass_len="); Serial.print(strlen(cfg.mqttPassword));
-  Serial.println();
 
   String willPayload = R"({"type":"status","data":{"connected":false}})";
   const char* user = (cfg.mqttUsername[0] != '\0') ? cfg.mqttUsername : nullptr;
@@ -855,6 +830,30 @@ void handleMQTTMessage(const String& message) {
 
   } else if (action == "ping") {
     handlePing(0);
+
+  } else if (action == "restart_provisioning") {
+    StaticJsonDocument<256> rsp;
+    rsp["type"]              = "control_response";
+    rsp["data"]["action"]    = "restart_provisioning";
+    rsp["data"]["success"]   = true;
+    rsp["timestamp"]         = millis();
+    broadcastResponse(rsp);
+
+    // Flush pending response before wiping NVS
+    if (mqttClient.connected()) {
+      String output;
+      serializeJson(rsp, output);
+      mqttClient.publish(topicResponse.c_str(), output.c_str());
+    }
+    delay(200);
+
+    // Clear NVS so next boot enters AP provisioning mode
+    prefs.begin(PREFS_NAMESPACE, false);
+    prefs.clear();
+    prefs.end();
+    Serial.println("Provisioning reset. Rebooting to AP mode...");
+    delay(500);
+    ESP.restart();
 
   } else {
     sendError(0, "Unknown action: " + action);
