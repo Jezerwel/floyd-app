@@ -879,6 +879,15 @@ void setup() {
   loadConfig();
   totalVolumeCm3 = computeTotalVolume();
 
+  // MIGRATION: detect stale auto-generated password (8-char hex)
+  // from v2.1 first-boot bug — replace with known correct default
+  if (cfg.provisioned && strlen(cfg.mqttPassword) <= 8) {
+    Serial.println("WARNING: stale auto-gen MQTT password detected, resetting to default");
+    strncpy(cfg.mqttPassword, "@@Feedfrendz11@@", 32);
+    cfg.mqttPassword[32] = '\0';
+    saveConfig();
+  }
+
   if (!cfg.provisioned || cfg.wifiSSID[0] == '\0') {
     Serial.println("No saved WiFi credentials. Starting provisioning mode...");
     startProvisioningMode();
