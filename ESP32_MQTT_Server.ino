@@ -1,11 +1,12 @@
 // Floyd Feeder v2.1 — L298N Motor Driver Firmware (Optimized)
 // ESP32 MQTT client controlling auger + impeller via L298N
 #include <WiFi.h>
-#include <PubSubClient.h>
-#include <WiFiClientSecure.h>
 #include <WiFiManager.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
+#include <ESPmDNS.h>
+#include <ezTime.h>
+#include <sMQTTBroker.h>
 
 // ——— Persisted Config ————————————————
 #define PREFS_NAMESPACE  "floyd-cfg"
@@ -20,14 +21,37 @@ struct AppConfig {
   unsigned long sensorInterval = 5000;
   char wifiSSID[33]           = "";
   char wifiPassword[65]       = "";
-  char mqttBroker[64]         = "4db1d3fef94e4b7d9600811e579488e7.s1.eu.hivemq.cloud";
-  char mqttUsername[33]       = "floyd-server";
-  char mqttPassword[33]       = "@@Feedfrendz11@@";
   bool provisioned            = false;
 };
 
 AppConfig cfg;
 Preferences prefs;
+Timezone tzLocal;
+
+// ——— Schedule Persistence ——————————————
+#define MAX_SCHEDULES 10
+#define PREFS_KEY_SCHEDULES "sched"
+
+struct FeedSchedule {
+  char id[13];           // 12-char hex + null
+  char label[33];        // schedule name
+  char time[6];          // "HH:MM"
+  char daysOfWeek[14];   // "0,1,2,3,4,5,6"
+  int augerSpeed;
+  int impellerSpeed;
+  unsigned long preSpinMs;
+  unsigned long feedMs;
+  unsigned long postSpinMs;
+  bool enabled;
+  unsigned long lastFired; // millis() of last trigger
+};
+
+struct ScheduleStore {
+  uint8_t count;
+  FeedSchedule schedules[MAX_SCHEDULES];
+};
+
+ScheduleStore scheduleStore;
 
 // ——— Device Identity ————————————————————
 String      deviceChipId = String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), HEX);
@@ -41,8 +65,9 @@ String      pendingCommandPayload;
 String      pendingResponse;
 volatile bool pendingCommand = false;
 
-WiFiClientSecure wifiClient;
-PubSubClient     mqttClient(wifiClient);
+// ——— Embedded MQTT Broker ———————————————
+sMQTTBroker broker;
+WiFiServer  wifiServer(1883);  // MQTT broker on port 1883
 
 // ——— Pin Definitions ————————————————————
 // L298N Motor Driver
@@ -82,12 +107,8 @@ unsigned long lastSensorRead = 0;
 // ——— WiFi / MQTT Reconnect ——————————————
 unsigned long lastWiFiCheck      = 0;
 unsigned long wifiDownSince       = 0;
-unsigned long lastMqttAttempt    = 0;
-unsigned int  mqttReconnectDelay = 1000;
 #define WIFI_CHECK_INTERVAL         30000
 #define WIFI_DOWN_REBOOT_MS         120000  // reboot if WiFi down > 2 min
-#define MQTT_RECONNECT_BASE_DELAY   1000
-#define MQTT_RECONNECT_MAX_DELAY    60000
 
 // ——— Motor State Machine ————————————————
 enum MotorState {
@@ -116,10 +137,17 @@ struct SensorData {
 } sensors;
 
 // ——— Forward Declarations ———————————————
-void connectMQTT();
 void broadcastResponse(JsonDocument& doc);
 void sendDeviceStatus(uint8_t num);
 const char* motorStateLabel(MotorState st);
+
+// ——— Broker Command Callback —————————————
+void onBrokerMessage(const String& topic, const String& message) {
+  if (topic == topicCommand) {
+    pendingCommandPayload = message;
+    pendingCommand = true;
+  }
+}
 
 // ============================================================
 //  Preferences Config Save / Load
@@ -142,6 +170,80 @@ void saveConfig() {
   prefs.putBytes(PREFS_KEY_CFG, &cfg, sizeof(AppConfig));
   prefs.end();
   Serial.println("Saved config to NVS");
+}
+
+  Serial.println("Saved config to NVS");
+}
+
+void loadSchedules() {
+  prefs.begin(PREFS_NAMESPACE, false);
+  size_t len = prefs.getBytesLength(PREFS_KEY_SCHEDULES);
+  if (len == sizeof(ScheduleStore)) {
+    prefs.getBytes(PREFS_KEY_SCHEDULES, &scheduleStore, sizeof(ScheduleStore));
+    Serial.printf("Loaded %d schedules from NVS\n", scheduleStore.count);
+  } else {
+    scheduleStore.count = 0;
+    Serial.println("No valid schedules in NVS");
+  }
+  prefs.end();
+}
+
+void saveSchedules() {
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.putBytes(PREFS_KEY_SCHEDULES, &scheduleStore, sizeof(ScheduleStore));
+  prefs.end();
+  Serial.printf("Saved %d schedules to NVS\n", scheduleStore.count);
+}
+
+void syncNTP() {
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  static bool ntpSynced = false;
+  if (!ntpSynced) {
+    Serial.println("Syncing NTP time...");
+    if (waitForSync(10000)) {
+      tzLocal.setLocation(F("Asia/Shanghai"));  // default; user-configurable later
+      Serial.println("NTP synced: " + UTC.dateTime());
+      ntpSynced = true;
+    } else {
+      Serial.println("NTP sync timeout — will retry");
+    }
+  }
+
+  if (ntpSynced) {
+    events();  // ezTime event processing
+  }
+}
+
+void checkSchedules() {
+  if (!UTC.isSet()) return;  // no NTP time yet
+
+  String nowTime = UTC.dateTime("H:i");    // "HH:MM"
+  int nowDow = UTC.dateTime("w").toInt();  // 0=Sun, 1=Mon, ...
+
+  for (uint8_t i = 0; i < scheduleStore.count; i++) {
+    FeedSchedule& sch = scheduleStore.schedules[i];
+    if (!sch.enabled) continue;
+
+    String schTime = String(sch.time);
+    if (schTime != nowTime) continue;
+
+    // Check day of week
+    String days = String(sch.daysOfWeek);
+    if (days.indexOf(String(nowDow)) < 0) continue;
+
+    // Prevent re-firing in the same minute
+    if (sch.lastFired != 0) {
+      unsigned long nowMillis = millis();
+      if (nowMillis - sch.lastFired < 59000) continue;  // 59s debounce
+    }
+
+    // Fire the feed
+    sch.lastFired = millis();
+    startFeeding(sch.augerSpeed, sch.impellerSpeed, sch.preSpinMs, sch.feedMs, sch.postSpinMs);
+
+    Serial.printf("Scheduled feed: %s at %s\n", sch.label, nowTime.c_str());
+  }
 }
 
 // ============================================================
@@ -184,39 +286,19 @@ void setupMQTTTopics() {
 //  WiFi Provisioning (WiFiManager)
 // ============================================================
 
-String generateMqttPassword() {
-  // Use both cycle count and MAC for better randomness
-  uint32_t seed = ESP.getCycleCount();
-  for (int i = 0; i < 6; i++) seed ^= (uint32_t)ESP.getEfuseMac() >> (i * 8);
-  randomSeed(seed);
-  return String(random(0x10000000, 0x7FFFFFFF), HEX);
-}
-
 void startProvisioningMode() {
   WiFiManager wm;
 
-  if (cfg.mqttPassword[0] == '\0') {
-    String pw = generateMqttPassword();
-    strncpy(cfg.mqttPassword, pw.c_str(), 32);
-    cfg.mqttPassword[32] = '\0';
-  }
-
   WiFiManagerParameter customDeviceId("deviceId", "Device ID", deviceChipId.c_str(), 20);
   WiFiManagerParameter customDeviceName("deviceName", "Device Name", "Floyd Feeder", 32);
-  WiFiManagerParameter customMqttBroker("mqttBroker", "MQTT Broker", cfg.mqttBroker, 64);
-  WiFiManagerParameter customMqttUsername("mqttUsername", "MQTT Username", cfg.mqttUsername, 32);
-  WiFiManagerParameter customMqttPassword("mqttPassword", "MQTT Password", cfg.mqttPassword, 32);
 
   wm.setCustomHeadElement(
     "<style>body{font-family:system-ui,sans-serif;}button{background:#2e7d32!important;}</style>"
     "<p><strong>Floyd Fish Feeder Setup</strong></p>"
-    "<p>Save the device ID and MQTT credentials shown below. The app uses them to claim this feeder.</p>"
+    "<p>Enter your home WiFi credentials below. The feeder will connect to your network.</p>"
   );
   wm.addParameter(&customDeviceId);
   wm.addParameter(&customDeviceName);
-  wm.addParameter(&customMqttBroker);
-  wm.addParameter(&customMqttUsername);
-  wm.addParameter(&customMqttPassword);
   wm.setConfigPortalTimeout(180);
   wm.setConnectTimeout(30);
 
@@ -233,12 +315,6 @@ void startProvisioningMode() {
   cfg.wifiSSID[32]     = '\0';
   strncpy(cfg.wifiPassword, WiFi.psk().c_str(),  64);
   cfg.wifiPassword[64] = '\0';
-  strncpy(cfg.mqttBroker,   customMqttBroker.getValue(),   63);
-  cfg.mqttBroker[63]   = '\0';
-  strncpy(cfg.mqttUsername, customMqttUsername.getValue(), 32);
-  cfg.mqttUsername[32] = '\0';
-  strncpy(cfg.mqttPassword, customMqttPassword.getValue(), 32);
-  cfg.mqttPassword[32] = '\0';
   cfg.provisioned = true;
 
   saveConfig();
@@ -307,82 +383,6 @@ void checkWiFiConnection() {
     }
   } else {
     wifiDownSince = 0;  // connected, reset timer
-  }
-}
-
-// ============================================================
-//  MQTT
-// ============================================================
-
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
-  String message;
-  message.reserve(length);
-  for (unsigned int i = 0; i < length; i++) message += (char)payload[i];
-
-  if (String(topic) == topicCommand) {
-    pendingCommandPayload = message;
-    pendingCommand = true;
-  }
-}
-
-void connectMQTT() {
-  if (mqttClient.connected()) return;
-
-  wifiClient.setInsecure();
-  wifiClient.setTimeout(5000);
-
-  String willPayload = R"({"type":"status","data":{"connected":false}})";
-  const char* user = (cfg.mqttUsername[0] != '\0') ? cfg.mqttUsername : nullptr;
-
-  bool ok = mqttClient.connect(
-    mqttClientId.c_str(), user, cfg.mqttPassword,
-    topicStatus.c_str(), 0, true, willPayload.c_str()
-  );
-
-  if (ok) {
-    Serial.println("MQTT connected, subscribing...");
-    mqttClient.subscribe(topicCommand.c_str());
-    mqttReconnectDelay = MQTT_RECONNECT_BASE_DELAY;  // reset backoff
-    sendDeviceStatus(0);
-  } else {
-    Serial.print("MQTT connect failed, rc=");
-    Serial.print(mqttClient.state());
-    // -4=TIMEOUT  -2=CONNECT_FAILED  5=UNAUTHORIZED (bad creds)
-    const char* reason = "";
-    switch (mqttClient.state()) {
-      case -4: reason = " (TIMEOUT)";               break;
-      case -3: reason = " (CONNECTION_LOST)";       break;
-      case -2: reason = " (TCP connect failed)";     break;
-      case  5: reason = " (UNAUTHORIZED — check user/pass)"; break;
-    }
-    Serial.println(reason);
-  }
-}
-
-void configureMQTTClient() {
-  mqttClientId = "floyd-" + deviceChipId;
-  mqttClient.setServer(cfg.mqttBroker, 8883);
-  mqttClient.setCallback(mqttCallback);
-  mqttClient.setKeepAlive(30);
-  mqttClient.setBufferSize(1024);
-}
-
-void checkMQTTConnection() {
-  if (WiFi.status() != WL_CONNECTED) return;
-  if (mqttClient.connected()) return;
-
-  // Exponential backoff to avoid reconnect storms
-  if (millis() - lastMqttAttempt < mqttReconnectDelay) return;
-  lastMqttAttempt = millis();
-
-  Serial.print("MQTT reconnecting (delay=");
-  Serial.print(mqttReconnectDelay);
-  Serial.println("ms)...");
-
-  connectMQTT();
-
-  if (!mqttClient.connected()) {
-    mqttReconnectDelay = min(mqttReconnectDelay * 2, (unsigned int)MQTT_RECONNECT_MAX_DELAY);
   }
 }
 
@@ -638,9 +638,7 @@ void broadcastSensorData() {
 
   String output;
   serializeJson(doc, output);
-  if (mqttClient.connected()) {
-    mqttClient.publish(topicTelemetry.c_str(), output.c_str());
-  }
+  broker.publish(topicTelemetry.c_str(), output.c_str());
 }
 
 void sendSensorData(uint8_t num) {
@@ -683,9 +681,7 @@ void sendDeviceStatus(uint8_t num) {
 
   String output;
   serializeJson(doc, output);
-  if (mqttClient.connected()) {
-    mqttClient.publish(topicStatus.c_str(), output.c_str(), true);
-  }
+  broker.publish(topicStatus.c_str(), output.c_str(), true);
 }
 
 void sendFeedingComplete() {
@@ -831,6 +827,62 @@ void handleMQTTMessage(const String& message) {
   } else if (action == "ping") {
     handlePing(0);
 
+  } else if (action == "get_schedules") {
+    StaticJsonDocument<2048> rsp;
+    rsp["type"] = "schedules_list";
+    JsonArray arr = rsp.createNestedArray("data");
+
+    for (uint8_t i = 0; i < scheduleStore.count; i++) {
+      FeedSchedule& sch = scheduleStore.schedules[i];
+      JsonObject obj = arr.createNestedObject();
+      obj["id"] = sch.id;
+      obj["label"] = sch.label;
+      obj["time"] = sch.time;
+      obj["daysOfWeek"] = sch.daysOfWeek;
+      obj["augerSpeed"] = sch.augerSpeed;
+      obj["impellerSpeed"] = sch.impellerSpeed;
+      obj["preSpinMs"] = sch.preSpinMs;
+      obj["feedMs"] = sch.feedMs;
+      obj["postSpinMs"] = sch.postSpinMs;
+      obj["enabled"] = sch.enabled;
+    }
+    rsp["timestamp"] = millis();
+    broadcastResponse(rsp);
+
+  } else if (action == "set_schedules") {
+    JsonArray arr = doc["parameters"]["schedules"];
+    scheduleStore.count = min((uint8_t)arr.size(), (uint8_t)MAX_SCHEDULES);
+
+    for (uint8_t i = 0; i < scheduleStore.count; i++) {
+      JsonObject obj = arr[i];
+      FeedSchedule& sch = scheduleStore.schedules[i];
+      strncpy(sch.id, obj["id"] | "", 12);
+      strncpy(sch.label, obj["label"] | "Feed", 32);
+      strncpy(sch.time, obj["time"] | "08:00", 5);
+      strncpy(sch.daysOfWeek, obj["daysOfWeek"] | "0,1,2,3,4,5,6", 13);
+      sch.augerSpeed = obj["augerSpeed"] | 768;
+      sch.impellerSpeed = obj["impellerSpeed"] | 1023;
+      sch.preSpinMs = obj["preSpinMs"] | 1500;
+      sch.feedMs = obj["feedMs"] | 3000;
+      sch.postSpinMs = obj["postSpinMs"] | 1500;
+      sch.enabled = obj["enabled"] | true;
+      sch.lastFired = 0;
+    }
+
+    saveSchedules();
+
+    StaticJsonDocument<256> rsp;
+    rsp["type"] = "control_response";
+    rsp["data"]["action"] = "set_schedules";
+    rsp["data"]["success"] = true;
+    rsp["timestamp"] = millis();
+    broadcastResponse(rsp);
+
+  } else if (action == "ping") {
+    handlePing(0);
+
+  } else if (action == "get_schedules")
+
   } else if (action == "restart_provisioning") {
     StaticJsonDocument<256> rsp;
     rsp["type"]              = "control_response";
@@ -840,11 +892,9 @@ void handleMQTTMessage(const String& message) {
     broadcastResponse(rsp);
 
     // Flush pending response before wiping NVS
-    if (mqttClient.connected()) {
-      String output;
-      serializeJson(rsp, output);
-      mqttClient.publish(topicResponse.c_str(), output.c_str());
-    }
+    String output;
+    serializeJson(rsp, output);
+    broker.publish(topicResponse.c_str(), output.c_str());
     delay(200);
 
     // Clear NVS so next boot enters AP provisioning mode
@@ -876,16 +926,8 @@ void setup() {
   setupMQTTTopics();
 
   loadConfig();
+  loadSchedules();
   totalVolumeCm3 = computeTotalVolume();
-
-  // MIGRATION: detect stale auto-generated password (8-char hex)
-  // from v2.1 first-boot bug — replace with known correct default
-  if (cfg.provisioned && strlen(cfg.mqttPassword) <= 8) {
-    Serial.println("WARNING: stale auto-gen MQTT password detected, resetting to default");
-    strncpy(cfg.mqttPassword, "@@Feedfrendz11@@", 32);
-    cfg.mqttPassword[32] = '\0';
-    saveConfig();
-  }
 
   if (!cfg.provisioned || cfg.wifiSSID[0] == '\0') {
     Serial.println("No saved WiFi credentials. Starting provisioning mode...");
@@ -893,13 +935,24 @@ void setup() {
   }
 
   connectToWiFi();
-  configureMQTTClient();
-  connectMQTT();
 
-  Serial.println("Setup complete. Ready for MQTT.");
+  // Advertise MQTT service via mDNS so the app can discover us
+  bool mdnsOk = MDNS.begin(("floyd-feeder-" + deviceChipId).c_str());
+  if (mdnsOk) {
+    MDNS.addService("mqtt", "tcp", 1883);
+    Serial.println("mDNS started: floyd-feeder-" + deviceChipId + ".local");
+  } else {
+    Serial.println("WARNING: mDNS failed to start");
+  }
+
+  // Start embedded MQTT broker on port 1883
+  wifiServer.begin(1883);
+  broker.init();
+  Serial.println("MQTT broker started on port 1883");
+
+  Serial.println("Setup complete. Ready for local MQTT.");
   Serial.println("Device ID:    " + deviceChipId);
-  Serial.println("MQTT Client:  " + mqttClientId);
-  Serial.println("MQTT Broker:  " + String(cfg.mqttBroker));
+  Serial.println("MQTT ID:      " + mqttClientId);
   Serial.println("Total volume: " + String(totalVolumeCm3) + " cm3");
 }
 
@@ -910,9 +963,25 @@ void setup() {
 void loop() {
   yield();
 
+  // Keep mDNS alive (required for ESPmDNS)
+  MDNS.update();
+
+  static unsigned long lastNtpUpdate = 0;
+  if (millis() - lastNtpUpdate > 60000) {  // resync every 60s
+    lastNtpUpdate = millis();
+    syncNTP();
+  }
+
+  checkSchedules();
+
   checkWiFiConnection();
-  checkMQTTConnection();
-  mqttClient.loop();
+
+  // Accept new MQTT client connections to the embedded broker
+  WiFiClient brokerClient = wifiServer.available();
+  if (brokerClient) {
+    broker.accept(brokerClient);
+  }
+  broker.update();
 
   if (pendingCommand) {
     pendingCommand = false;
@@ -920,8 +989,8 @@ void loop() {
     pendingCommandPayload = "";
   }
 
-  if (pendingResponse.length() > 0 && mqttClient.connected()) {
-    mqttClient.publish(topicResponse.c_str(), pendingResponse.c_str());
+  if (pendingResponse.length() > 0) {
+    broker.publish(topicResponse.c_str(), pendingResponse.c_str());
     pendingResponse = "";
   }
 
