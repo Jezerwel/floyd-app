@@ -21,11 +21,11 @@ graph LR
     APP["Mobile App"] -- REST --> API["Express Server"]
     APP -- MQTT --> HIVEMQ["HiveMQ Broker"]
     API -- MQTT --> HIVEMQ
-    HIVEMQ -- MQTT --> ESP["ESP8266 Feeder"]
+    HIVEMQ -- MQTT --> ESP["ESP32 Feeder"]
     API --> DB[("SQLite (Prisma)")]
 ```
 
-The server does not relay real-time messages. The app and ESP8266 communicate directly through MQTT. The server provides REST endpoints for device management, feed schedules, history, and alert configuration, and runs cron jobs to trigger scheduled feeds via MQTT.
+The server does not relay real-time messages. The app and ESP32 communicate directly through MQTT. The server provides REST endpoints for device management, feed schedules, history, and alert configuration, and runs cron jobs to trigger scheduled feeds via MQTT.
 
 ---
 

@@ -1,21 +1,21 @@
 # Known Bugs & Issues
 
-Tracked against the current MQTT-based architecture (ESP8266 + L298N + cloud server).
+Tracked against the current MQTT-based architecture (ESP32 + L298N + cloud server).
 
 ---
 
-## ESP8266 Firmware
+## ESP32 Firmware
 
 ### 1. OneWire v2.3.5 — 85°C Stuck Reading
 
-- **Issue:** OneWire library v2.3.5+ has a confirmed ESP8266 bug — temperature readings return a stuck value of **85°C** (DS18B20 power-on reset value). The library fails to drive the GPIO high during parasitic power conversion.
+- **Issue:** RESOLVED: DS18B20 temperature sensor is not currently connected, so this bug does not apply
 - **Root cause:** PaulStoffregen/OneWire#58
 - **Workaround:** Downgrade to OneWire v2.3.0, or add `delay(1000)` after `sensor.requestTemperatures()`.
 - **Severity:** HIGH
 
-### 2. TLS Heap Exhaustion on ESP8266
+### 2. TLS Heap Exhaustion on ESP32
 
-- **Issue:** TLS handshake with HiveMQ Cloud consumes 40–50KB of free heap (~80KB total on ESP8266). Community reports of OOM crashes, handshake timeouts, and connection drops after large messages.
+- **Issue:** TLS handshake with HiveMQ Cloud consumes 40–50KB of free heap (~80KB total on ESP32). ESP32 has significantly more heap (~520KB), so TLS heap exhaustion is no longer a concern. Community reports of OOM crashes, handshake timeouts, and connection drops after large messages.
 - **Root cause:** Espressif issue #6618, PubSubClient issue #462
 - **Workaround:** Use `setInsecure()` (skip cert validation). Fall back to public `broker.hivemq.com:1883` (plain TCP) if unstable.
 - **Severity:** MEDIUM

@@ -18,7 +18,7 @@
 - [ ] Authentication (JWT or API keys)
 - [ ] Export feed history as CSV
 
-## ESP8266 Firmware
+## ESP32 Firmware
 
 - [ ] OTA firmware updates via MQTT
 - [ ] Sensor calibration wizard (auto-detect container dimensions)

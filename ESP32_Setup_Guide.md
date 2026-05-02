@@ -1,6 +1,6 @@
-# Floyd Feeder — ESP8266 Setup Guide
+# Floyd Feeder — ESP32 Setup Guide
 
-MQTT-based firmware for the ESP8266 fish feeder with L298N motor driver, HC-SR04 ultrasonic, and DS18B20 temperature sensor.
+MQTT-based firmware for the ESP32 fish feeder with L298N motor driver, HC-SR04 ultrasonic, and DS18B20 temperature sensor.
 
 ---
 
@@ -8,7 +8,7 @@ MQTT-based firmware for the ESP8266 fish feeder with L298N motor driver, HC-SR04
 
 | Item | Qty |
 |------|-----|
-| ESP8266 NodeMCU (ESP-12E) | 1 |
+| ESP32 NodeMCU (ESP-12E) | 1 |
 | L298N Dual H-Bridge Motor Driver | 1 |
 | HC-SR04 Ultrasonic Sensor | 1 |
 | DS18B20 Temperature Sensor (TO-92) | 1 |
@@ -26,11 +26,9 @@ MQTT-based firmware for the ESP8266 fish feeder with L298N motor driver, HC-SR04
 ### 1. Board Support
 
 ```
-File → Preferences → Additional Board Manager URLs:
-http://arduino.esp8266.com/stable/package_esp8266com_index.json
-
-Tools → Board → Boards Manager → Search "esp8266" → Install
-Tools → Board → ESP8266 Boards → NodeMCU 1.0 (ESP-12E Module)
+5. Add ESP32 board URL to Arduino IDE:
+   - File → Preferences → Additional Boards Manager URLs: `https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json`
+   - Tools → Board → Boards Manager → Search "esp32" → Install "ESP32 Arduino"
 ```
 
 ### 2. Required Libraries
@@ -42,13 +40,13 @@ Tools → Board → ESP8266 Boards → NodeMCU 1.0 (ESP-12E Module)
 | ArduinoJson (Benoit Blanchon) | v7.x | JSON message parsing |
 | OneWire | v2.3.0 (NOT 2.3.5+) | DS18B20 protocol |
 | DallasTemperature | v3.11.1 | DS18B20 high-level API |
-| ESP8266WiFi | (built-in) | WiFi connectivity |
+| WiFi.h | (built-in) | WiFi connectivity |
 
-> **OneWire warning:** v2.3.5+ has a confirmed ESP8266 bug causing stuck 85°C readings. Use v2.3.0.
+> **OneWire warning:** not applicable (DS18B20 not connected)
 
 ### 3. Flash Firmware
 
-1. Open `ESP8266_MQTT_Server.ino` in Arduino IDE
+1. Open `ESP32_MQTT_Server.ino` in Arduino IDE
 2. Select COM port under *Tools → Port*
 3. Set baud rate: `115200`, Flash Size: `4MB (FS:1MB OTA:~1019KB)`
 4. **Upload** (Ctrl+U)
@@ -58,43 +56,47 @@ Tools → Board → ESP8266 Boards → NodeMCU 1.0 (ESP-12E Module)
 
 ## Wiring
 
-### L298N → ESP8266
+### L298N → ESP32
 
-| L298N | ESP8266 | Function |
-|-------|---------|----------|
-| ENA | D5 (GPIO14) | Auger PWM speed |
-| IN1 | D6 (GPIO12) | Auger Direction 1 |
-| IN2 | D7 (GPIO13) | Auger Direction 2 |
-| ENB | D3 (GPIO0) | Impeller PWM speed |
-| IN3 | D8 (GPIO15) | Impeller Direction 3 |
-| IN4 | D0 (GPIO16) | Impeller Direction 4 |
+| L298N | ESP32 | Function |
+|-------|-------|----------|
+| ENA | GPIO14 (GPIO14) | Auger PWM speed |
+| IN1 | GPIO12 (GPIO12) | Auger Direction 1 |
+| IN2 | GPIO13 (GPIO13) | Auger Direction 2 |
+| ENB | GPIO0 (GPIO0) | Impeller PWM speed |
+| IN3 | GPIO15 (GPIO15) | Impeller Direction 3 |
+| IN4 | GPIO16 (GPIO16) | Impeller Direction 4 |
 | 12V | — | 12V PSU positive |
 | GND | — | Shared ground bus |
 
 **Critical:** Remove ENA/ENB jumper caps for PWM control. Leave 5V enable jumper in place.
 
-### HC-SR04 → ESP8266
+### HC-SR04 → ESP32
 
-| HC-SR04 | ESP8266 | Note |
-|---------|---------|------|
+| HC-SR04 | ESP32 | Note |
+|---------|-------|------|
 | VCC | 5V (VU) | 5V required |
-| TRIG | D1 (GPIO5) | 10µs pulse |
-| ECHO | D2 (GPIO4) | Via 1kΩ→2kΩ voltage divider |
+| TRIG | GPIO5 (GPIO5) | 10µs pulse |
+| ECHO | GPIO4 (GPIO4) | Via 1kΩ→2kΩ voltage divider |
 | GND | GND | Shared ground |
 
-### DS18B20 → ESP8266
+**NOTE:** HC-SR04 ultrasonic sensor is not currently connected
 
-| DS18B20 | ESP8266 | Note |
-|---------|---------|------|
+### DS18B20 → ESP32
+
+| DS18B20 | ESP32 | Note |
+|---------|-------|------|
 | VDD | 3.3V | |
-| DQ | D4 (GPIO2) | 4.7kΩ pull-up to 3.3V |
+| DQ | GPIO2 (GPIO2) | 4.7kΩ pull-up to 3.3V |
 | GND | GND | Shared ground |
+
+**NOTE:** DS18B20 temperature sensor is not currently connected
 
 ---
 
 ## Provisioning (First Boot)
 
-1. Power on ESP8266 — it boots as SoftAP `FloydFeeder-{chipId}`
+1. Power on ESP32 — it boots as SoftAP `FloydFeeder-{chipId}`
 2. Connect phone to that WiFi network (no password)
 3. Open Floyd app → provisioning screen
 4. WebView loads `192.168.4.1` (WiFiManager portal)
@@ -120,9 +122,9 @@ Tools → Board → ESP8266 Boards → NodeMCU 1.0 (ESP-12E Module)
 ## Troubleshooting
 
 ### ESP won't boot
-- D8 (GPIO15) must be LOW — check L298N IN3 connection
-- D3 (GPIO0) must be HIGH — check for pull-ups
-- D4 (GPIO2) pulled LOW? 4.7kΩ pull-up to 3.3V required
+- GPIO15 (GPIO15) must be LOW — check L298N IN3 connection
+- GPIO0 (GPIO0) must be HIGH — check for pull-ups
+- GPIO2 (GPIO2) pulled LOW? 4.7kΩ pull-up to 3.3V required
 
 ### Motors don't move
 - ENA/ENB jumper caps removed? (required for PWM)
@@ -135,8 +137,7 @@ Tools → Board → ESP8266 Boards → NodeMCU 1.0 (ESP-12E Module)
 - Sensor facing downward with clear acoustic cone?
 
 ### DS18B20 reads 85°C
-- OneWire v2.3.5 bug — downgrade to v2.3.0
-- Or add `delay(1000)` after `requestTemperatures()`
+- not applicable (DS18B20 not connected)
 
 ### MQTT won't connect
 - Check Serial Monitor for broker URL

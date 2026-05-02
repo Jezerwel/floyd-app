@@ -1,9 +1,9 @@
 # Floyd Feeder
 
-Control your fish feeder from anywhere. A cloud-connected IoT system with a React Native app, Express API server, and ESP8266-based feeder hardware.
+Control your fish feeder from anywhere. A cloud-connected IoT system with a React Native app, Express API server, and ESP32-based feeder hardware.
 
 ```
-Mobile App (Expo/RN) ↔ HiveMQ MQTT Broker ↔ ESP8266 Feeder
+Mobile App (Expo/RN) ↔ HiveMQ MQTT Broker ↔ ESP32 Feeder
                      ↔ Railway Express Server (REST APIs + cron scheduling)
 ```
 
@@ -32,10 +32,10 @@ graph TB
         MQTT["HiveMQ Broker"]
         API["Railway Express Server<br/>REST + cron"]
     end
-    subgraph Hardware["ESP8266 Feeder"]
-        FW["ESP8266 Firmware"]
+    subgraph Hardware["ESP32 Feeder"]
+        FW["ESP32 Firmware"]
         L298N["L298N Motor Driver"]
-        SENSORS["HC-SR04 + DS18B20"]
+        SENSORS["HC-SR04 + DS18B20 (not currently connected)"]
     end
     Mobile -- MQTT --> MQTT
     Mobile -- REST --> API
@@ -53,7 +53,7 @@ graph TB
 |-----------|-------|
 | **Mobile App** | React Native 0.83 + Expo SDK 55 + Expo Router |
 | **Cloud Server** | Node.js + Express + Prisma + SQLite |
-| **IoT Firmware** | Arduino (ESP8266) + PubSubClient + WiFiManager |
+| **IoT Firmware** | Arduino (ESP32) + PubSubClient + WiFiManager |
 | **MQTT Broker** | HiveMQ Cloud (public or dedicated cluster) |
 
 ### Key Libraries
@@ -97,13 +97,13 @@ floyd-app/
 │   └── provision.tsx     # WiFi provisioning wizard
 ├── components/           # Reusable UI components
 │   └── ui/               # CircularProgress, StatCard, Skeleton, etc.
-├── hooks/                # useMQTT, useESP8266Context, useAlerts
+├── hooks/                # useMQTT, useESP32Context, useAlerts
 ├── services/api.ts       # REST API client
 ├── constants/Colors.ts   # Light/dark theme
 ├── server/               # Express cloud API
 │   ├── prisma/schema.prisma
 │   └── src/services/     # mqttClient.ts, scheduler.ts, db.ts
-├── ESP8266_MQTT_Server.ino
+├── ESP32_MQTT_Server.ino
 └── docs/
 ```
 
@@ -113,10 +113,10 @@ floyd-app/
 
 | Component | Purpose |
 |-----------|---------|
-| ESP8266 NodeMCU | WiFi + MQTT microcontroller |
+| ESP32 Dev Module | WiFi + BLE + MQTT microcontroller |
 | L298N H-Bridge | Drives auger + impeller motors |
-| HC-SR04 | Ultrasonic food level sensor |
-| DS18B20 | Waterproof temperature sensor |
+| HC-SR04 | Ultrasonic food level sensor (not currently connected) |
+| DS18B20 | Waterproof temperature sensor (not currently connected) |
 
 ---
 

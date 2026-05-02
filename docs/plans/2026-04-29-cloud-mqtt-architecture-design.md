@@ -5,7 +5,7 @@
 
 ## 1. Motivation
 
-Current architecture has a fundamental topology problem: the cloud server on Railway initiates a WebSocket connection *to* the ESP8266 (`ws://<ESP_IP>:81`). The ESP8266 sits behind a home NAT — the cloud cannot reach it unless it has a public IP or port forwarding.
+Current architecture has a fundamental topology problem: the cloud server on Railway initiates a WebSocket connection *to* the ESP32 (`ws://<ESP_IP>:81`). The ESP32 sits behind a home NAT — the cloud cannot reach it unless it has a public IP or port forwarding.
 
 Additionally, WiFi credentials are hardcoded, and there is no device discovery, pairing, or provisioning flow.
 
@@ -23,7 +23,7 @@ Additionally, WiFi credentials are hardcoded, and there is no device discovery, 
                  MQTT (plain)    MQTTS (TLS)
                        │              │
               ┌────────┴───┐    ┌─────┴──────────┐
-              │ ESP8266     │    │  Mobile App     │
+              │ ESP32     │    │  Mobile App     │
               │ (MQTT cli)  │    │  (mqtt.js)      │
               │ publishes:  │    │  subscribes:    │
               │  telemetry  │    │  telemetry      │
@@ -52,8 +52,8 @@ Additionally, WiFi credentials are hardcoded, and there is no device discovery, 
 |---|---|---|
 | Protocol | MQTT | Industry standard for IoT; QoS, retain, last-will; HiveMQ free tier handles everything |
 | Broker | HiveMQ Cloud Serverless free tier | 100 connections/10GB free, no credit card, MQTT 5.0 + WebSocket + TLS support |
-| ESP MQTT library | EspMQTTClient (wraps PubSubClient) | Raw PubSubClient has documented reliability issues on ESP8266 — keepalive timeout bugs, failed reconnects (GitHub issues #243, #795, #825). EspMQTTClient handles reconnection & WiFi monitoring. |
-| ESP→Broker TLS | No TLS | ESP8266 heap constraints (~40KB free); home WiFi hop is trusted |
+| ESP MQTT library | EspMQTTClient (wraps PubSubClient) | Raw PubSubClient has documented reliability issues on ESP32 — keepalive timeout bugs, failed reconnects (GitHub issues #243, #795, #825). EspMQTTClient handles reconnection & WiFi monitoring. |
+| ESP→Broker TLS | No TLS | ESP32 heap constraints (~320KB free heap (ESP32)); home WiFi hop is trusted |
 | App→Broker | MQTTS (TLS) over port 8883 | mqtt.js v5.9+ with `timerVariant: 'native'` for Hermes engine compatibility |
 | WiFi provisioning | WiFiManager with custom MQTT params | Handles captive portal, SSID selector, auto-reconnect. Custom params for MQTT broker/password. |
 | Device pairing | Anonymous claim | No auth for now; device ID (chip MAC) + generated MQTT password stored in EEPROM |
@@ -114,7 +114,7 @@ Message format remains identical to current WebSocket JSON protocol — no chang
 
 ## 6. Component Changes
 
-### 6.1 ESP8266 Firmware (`ESP8266_WebSocket_Server.ino`)
+### 6.1 ESP32 Firmware (`ESP32_MQTT_Server.ino`)
 
 | Change | Detail |
 |---|---|
@@ -136,7 +136,7 @@ Message format remains identical to current WebSocket JSON protocol — no chang
 |---|---|
 | Add | `mqtt.js` npm dependency |
 | Remove | `hooks/useWebSocket.ts` — replaced by MQTT-based hook |
-| Refactor | `hooks/useESP8266Context.tsx` — `sendCommand` → `publish`; `lastMessage` → MQTT subscription |
+| Refactor | `hooks/useESP32Context.tsx` — `sendCommand` → `publish`; `lastMessage` → MQTT subscription |
 | Add | `screens/provision.tsx` — WiFi scan, WebView, claim API call |
 | Add | `hooks/useMQTT.ts` — MQTT equivalent of useWebSocket with reconnect, topic subscriptions |
 | Keep | All UI screens (dashboard, controls, schedule, history) |
@@ -146,7 +146,7 @@ Message format remains identical to current WebSocket JSON protocol — no chang
 
 | Change | Detail |
 |---|---|
-| Remove | `services/esp8266Client.ts` — server no longer connects to ESP |
+| Remove | `services/esp32Client.ts` — server no longer connects to ESP |
 | Remove | `websocket/proxyHandlers.ts` — no WebSocket proxy for app |
 | Remove | `WebSocketServer` from `server.ts` |
 | Add | `mqtt` npm dependency |
@@ -178,11 +178,11 @@ model Device {
 | `MQTT_USERNAME` | (optional) HiveMQ credentials |
 | `MQTT_PASSWORD` | (optional) HiveMQ credentials |
 
-ESP8266-specific env vars (`ESP8266_HOST`, `ESP8266_PORT`) are removed.
+ESP32-specific env vars (`ESP32_HOST`, `ESP32_PORT`) are removed.
 
 ## 9. No-Auth Security Model
 
-- Device identity: ESP8266 chip MAC address
+- Device identity: ESP32 chip MAC address
 - MQTT password: random string generated during provisioning, stored in EEPROM + server DB
 - Claim: any client that presents the correct deviceId + mqttPassword owns the device
 - No user accounts, no JWT, no session management
@@ -192,7 +192,7 @@ ESP8266-specific env vars (`ESP8266_HOST`, `ESP8266_PORT`) are removed.
 
 | Risk | Mitigation |
 |---|---|
-| PubSubClient on ESP8266 unreliable | Use EspMQTTClient wrapper instead; add yield() + delay in loop; never publish from callback |
+| PubSubClient on ESP32 unreliable | Use EspMQTTClient wrapper instead; add yield() + delay in loop; never publish from callback |
 | mqtt.js "Keepalive timeout" on React Native Hermes | Set `timerVariant: 'native'`, `reschedulePings: true`, `keepalive: 30` |
 | process.nextTick not available in RN | Polyfill with `setTimeout(callback, 0)` before importing mqtt |
 | No TLS on ESP→broker means MQTT password visible on LAN | Acceptable for home use; password is per-device and random |

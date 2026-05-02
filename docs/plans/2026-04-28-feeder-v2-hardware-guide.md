@@ -1,5 +1,7 @@
 # Floyd Fish Feeder v2 — Hardware Setup Guide
 
+> **Note:** This guide describes the original hardware design. The project now uses ESP32. HC-SR04 and DS18B20 sensors are not currently connected.
+
 ---
 
 ## What This Device Does
@@ -35,7 +37,7 @@ An automatic fish feeder you control from your phone. It has:
 
 | Part                          | Quantity | Notes                                        |
 | ----------------------------- | -------- | -------------------------------------------- |
-| ESP8266 (NodeMCU or Wemos D1) | 1        | The brain. Needs WiFi.                       |
+| ESP32 (NodeMCU or Wemos D1) | 1        | The brain. Needs WiFi.                       |
 | L298N Motor Driver            | 1        | Drives both motors. Can handle 2A per motor. |
 | DC Auger Motor                | 1        | Low speed, high torque. The food pusher.     |
 | DC Impeller Motor             | 1        | Spins a fan/blower. The food spreader.       |
@@ -43,7 +45,7 @@ An automatic fish feeder you control from your phone. It has:
 | DS18B20 Temperature Sensor    | 1        | Waterproof. Goes in the water.               |
 | 4.7kΩ Resistor                | 1        | Pull-up for DS18B20 data line.               |
 | 12V Power Supply              | 1        | Powers the L298N motor driver.               |
-| 5V Power Supply (or USB)      | 1        | Powers the ESP8266.                          |
+| 5V Power Supply (or USB)      | 1        | Powers the ESP32.                          |
 
 ### Optional / Nice to Have
 
@@ -63,8 +65,8 @@ An automatic fish feeder you control from your phone. It has:
 │                          L298N MOTOR DRIVER                         │
 │                                                                     │
 │  +12V ──── 12V pin                                                  │
-│  GND  ──── GND pin (shared with ESP8266)                            │
-│  +5V  ──── 5V pin  (can power ESP8266 if 5V regulator enabled)     │
+│  GND  ──── GND pin (shared with ESP32)                            │
+│  +5V  ──── 5V pin  (can power ESP32 if 5V regulator enabled)     │
 │                                                                     │
 │  ┌──── Motor A (Auger) ────┐    ┌──── Motor B (Impeller) ────┐     │
 │  │                         │    │                             │     │
@@ -72,7 +74,7 @@ An automatic fish feeder you control from your phone. It has:
 │  │  OUT2 ──── Auger -      │    │  OUT4 ──── Impeller -       │     │
 │  └─────────────────────────┘    └─────────────────────────────┘     │
 │                                                                     │
-│  Control pins (to ESP8266):                                         │
+│  Control pins (to ESP32):                                         │
 │  ┌─────────────────────┐    ┌─────────────────────┐                │
 │  │  ENA (PWM speed)    │    │  ENB (PWM speed)    │                │
 │  │  IN1 (direction)    │    │  IN3 (direction)    │                │
@@ -81,24 +83,24 @@ An automatic fish feeder you control from your phone. It has:
 └─────────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────────┐
-│                          ESP8266 (NodeMCU)                          │
+│                          ESP32 (NodeMCU)                          │
 │                                                                     │
 │         ┌───────────────────────────────────────────┐              │
 │         │              USB (power/program)           │              │
 │         └───────────────────────────────────────────┘              │
 │                                                                     │
-│  D0 (GPIO16) ──── L298N IN4    (Impeller Direction 2)              │
-│  D1 (GPIO5)  ──── HC-SR04 TRIG                                   │
-│  D2 (GPIO4)  ──── HC-SR04 ECHO                                   │
-│  D3 (GPIO0)  ──── L298N ENB    (Impeller PWM Speed)               │
-│  D4 (GPIO2)  ──── DS18B20 DATA (with 4.7kΩ to 3.3V)              │
-│  D5 (GPIO14) ──── L298N ENA    (Auger PWM Speed)                  │
-│  D6 (GPIO12) ──── L298N IN1    (Auger Direction 1)                │
-│  D7 (GPIO13) ──── L298N IN2    (Auger Direction 2)                │
-│  D8 (GPIO15) ──── L298N IN3    (Impeller Direction 1)              │
+│  GPIO16 ──── L298N IN4    (Impeller Direction 2)              │
+│  GPIO5  ──── HC-SR04 TRIG                                   │
+│  GPIO4  ──── HC-SR04 ECHO                                   │
+│  GPIO0  ──── L298N ENB    (Impeller PWM Speed)               │
+│  GPIO2  ──── DS18B20 DATA (with 4.7kΩ to 3.3V)              │
+│  GPIO14 ──── L298N ENA    (Auger PWM Speed)                  │
+│  GPIO12 ──── L298N IN1    (Auger Direction 1)                │
+│  GPIO13 ──── L298N IN2    (Auger Direction 2)                │
+│  GPIO15 ──── L298N IN3    (Impeller Direction 1)              │
 │                                                                     │
 │  3.3V ──── DS18B20 VCC                                              │
-│  3.3V ──── 4.7kΩ resistor → D4                                      │
+│  3.3V ──── 4.7kΩ resistor → GPIO2                                      │
 │  GND  ──── DS18B20 GND                                              │
 │  GND  ──── HC-SR04 GND                                              │
 │  GND  ──── L298N GND                                                │
@@ -109,10 +111,10 @@ An automatic fish feeder you control from your phone. It has:
 ┌─────────────────────────────────────────────────────────────────────┐
 │                      HC-SR04 ULTRASONIC SENSOR                      │
 │                                                                     │
-│  VCC  ──── ESP8266 VU (5V)                                         │
-│  TRIG ──── ESP8266 D1 (GPIO5)                                      │
-│  ECHO ──── ESP8266 D2 (GPIO4)                                      │
-│  GND  ──── ESP8266 GND                                              │
+│  VCC  ──── ESP32 VU (5V)                                         │
+│  TRIG ──── ESP32 GPIO5                                      │
+│  ECHO ──── ESP32 GPIO4                                      │
+│  GND  ──── ESP32 GND                                              │
 │                                                                     │
 │  Mount facing DOWN into the food container.                         │
 │  Measures: distance to food surface → calculates fill percentage.   │
@@ -121,11 +123,11 @@ An automatic fish feeder you control from your phone. It has:
 ┌─────────────────────────────────────────────────────────────────────┐
 │                      DS18B20 TEMPERATURE SENSOR                     │
 │                                                                     │
-│  Red   (VCC)  ──── ESP8266 3.3V                                     │
-│  Black (GND)  ──── ESP8266 GND                                      │
-│  Yellow (DATA) ─── ESP8266 D4 (GPIO2)                               │
+│  Red   (VCC)  ──── ESP32 3.3V                                     │
+│  Black (GND)  ──── ESP32 GND                                      │
+│  Yellow (DATA) ─── ESP32 GPIO2                               │
 │                                                                     │
-│  4.7kΩ resistor between VCC (3.3V) and DATA (D4).                  │
+│  4.7kΩ resistor between VCC (3.3V) and DATA (GPIO2).                  │
 │                                                                     │
 │  Submerge the metal end in the water. Seal the wires.               │
 └─────────────────────────────────────────────────────────────────────┘
@@ -135,17 +137,17 @@ An automatic fish feeder you control from your phone. It has:
 
 ## Pin Summary Table
 
-| ESP8266 Pin | GPIO   | Connected To | Purpose                 |
+| ESP32 Pin | GPIO   | Connected To | Purpose                 |
 | ----------- | ------ | ------------ | ----------------------- |
-| D0          | GPIO16 | L298N IN4    | Impeller direction 2    |
-| D1          | GPIO5  | HC-SR04 TRIG | Ultrasonic trigger      |
-| D2          | GPIO4  | HC-SR04 ECHO | Ultrasonic echo         |
-| D3          | GPIO0  | L298N ENB    | Impeller PWM speed      |
-| D4          | GPIO2  | DS18B20 DATA | Temperature sensor data |
-| D5          | GPIO14 | L298N ENA    | Auger PWM speed         |
-| D6          | GPIO12 | L298N IN1    | Auger direction 1       |
-| D7          | GPIO13 | L298N IN2    | Auger direction 2       |
-| D8          | GPIO15 | L298N IN3    | Impeller direction 1    |
+| GPIO16          | GPIO16 | L298N IN4    | Impeller direction 2    |
+| GPIO5          | GPIO5  | HC-SR04 TRIG | Ultrasonic trigger      |
+| GPIO4          | GPIO4  | HC-SR04 ECHO | Ultrasonic echo         |
+| GPIO0          | GPIO0  | L298N ENB    | Impeller PWM speed      |
+| GPIO2          | GPIO2  | DS18B20 DATA | Temperature sensor data |
+| GPIO14          | GPIO14 | L298N ENA    | Auger PWM speed         |
+| GPIO12          | GPIO12 | L298N IN1    | Auger direction 1       |
+| GPIO13          | GPIO13 | L298N IN2    | Auger direction 2       |
+| GPIO15          | GPIO15 | L298N IN3    | Impeller direction 1    |
 
 ---
 
@@ -160,16 +162,16 @@ An automatic fish feeder you control from your phone. It has:
                              └──────────────┘ │
                                                │ 5V (if using L298N's
                              ┌──────────────┐ │ onboard regulator)
-                             │   ESP8266    │ │
+                             │   ESP32    │ │
                              │   VIN pin  ──┘
                              │   or USB port
                              └──────────────┘
 
-Alternative: Power ESP8266 separately via USB, L298N via 12V.
+Alternative: Power ESP32 separately via USB, L298N via 12V.
 Just make sure ALL GNDs are connected together.
 ```
 
-**Important:** Connect all GND pins together — ESP8266 GND, L298N GND, sensor GNDs. This is the reference for all signals.
+**Important:** Connect all GND pins together — ESP32 GND, L298N GND, sensor GNDs. This is the reference for all signals.
 
 ---
 
@@ -341,7 +343,7 @@ Press "CLEAR JAM" in app
 
 After you wire everything up, the software person needs to:
 
-1. **Flash the ESP8266** with new firmware (provided)
+1. **Flash the ESP32** with new firmware (provided)
 2. **Set the WiFi name and password** in the firmware
 3. **Deploy the cloud server** (it's already set up on Railway)
 4. **Test the app** — verify sensors read correctly, motors spin in the right direction
@@ -359,7 +361,7 @@ The dimensional values (height, min, max) are easy to change — just a few line
 ## Quick Reference Card
 
 ```
-POWER ON → ESP8266 connects to WiFi → starts WebSocket server
+POWER ON → ESP32 connects to WiFi → starts WebSocket server
          → Sensors start reading every 5 seconds
          → App connects via cloud server
          → App shows:
@@ -376,9 +378,9 @@ POWER ON → ESP8266 connects to WiFi → starts WebSocket server
 
 | Problem                        | Check                                                      |
 | ------------------------------ | ---------------------------------------------------------- |
-| Motors don't spin              | 12V power to L298N? GND connected to ESP8266?              |
+| Motors don't spin              | 12V power to L298N? GND connected to ESP32?              |
 | Ultrasonic reads wrong         | Sensor facing down? Nothing blocking the beam cone?        |
 | Temperature reads -127°C       | DS18B20 disconnected or bad wiring. Check 4.7kΩ resistor.  |
-| ESP8266 won't connect to WiFi  | Wrong SSID/password in firmware? Too far from router?      |
+| ESP32 won't connect to WiFi  | Wrong SSID/password in firmware? Too far from router?      |
 | App can't connect nect to WiFi | Wrong SSID/password in firmware? Too far from router?      |
-| App can't connect              | Cloud server down? ESP8266 not on same WiFi as configured? |
+| App can't connect              | Cloud server down? ESP32 not on same WiFi as configured? |

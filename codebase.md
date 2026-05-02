@@ -1,6 +1,6 @@
 # Floyd Feeder — Codebase Documentation
 
-Cloud-connected IoT fish feeder: React Native mobile app + Express cloud server + ESP8266 MQTT firmware.
+Cloud-connected IoT fish feeder: React Native mobile app + Express cloud server + ESP32 MQTT firmware.
 
 ---
 
@@ -10,7 +10,7 @@ Cloud-connected IoT fish feeder: React Native mobile app + Express cloud server 
 graph TB
     subgraph App["React Native App (Expo)"]
         UI["Screens: Dashboard, Controls, Schedule, Logs"]
-        CTX["useESP8266Context (MQTT state)"]
+        CTX["useESP32Context (MQTT state)"]
         API["services/api.ts (REST client)"]
     end
     subgraph Cloud["Cloud Infrastructure"]
@@ -18,10 +18,10 @@ graph TB
         SRV["Express Server (Railway)"]
         DB[("SQLite (Prisma)")]
     end
-    subgraph HW["ESP8266 Feeder"]
-        FW["ESP8266_MQTT_Server.ino"]
+    subgraph HW["ESP32 Feeder"]
+        FW["ESP32_MQTT_Server.ino"]
         L298N["L298N → Auger + Impeller"]
-        SENSORS["HC-SR04 + DS18B20"]
+        SENSORS["HC-SR04 + DS18B20 (not currently connected)"]
     end
     UI --> CTX
     CTX -- mqtts://8883 --> HIVEMQ
@@ -66,7 +66,7 @@ floyd-app/
 │       ├── schedule.tsx        # Schedule CRUD — time picker, day toggles
 │       └── history.tsx         # Feed logs, sensor history, alerts
 ├── components/
-│   ├── ESP8266Connection.tsx   # MQTT connection card (connect/disconnect/provision)
+│   ├── ESP32Connection.tsx   # MQTT connection card (connect/disconnect/provision)
 │   ├── ThemedText.tsx          # Theme-aware text component
 │   ├── ThemedView.tsx          # Theme-aware view component
 │   ├── HapticTab.tsx           # Haptic feedback tab button
@@ -90,7 +90,7 @@ floyd-app/
 │       └── TabButton.tsx       # Tab bar button
 ├── hooks/
 │   ├── useMQTT.ts             # Core MQTT connection (mqtt.js v5)
-│   ├── useESP8266Context.tsx   # MQTT context provider + device state
+│   ├── useESP32Context.tsx   # MQTT context provider + device state
 │   ├── useAlerts.ts           # Derived alerts from sensor data
 │   ├── useColorScheme.ts      # Light/dark scheme hook
 │   ├── useThemeColor.ts       # Theme color resolver
@@ -109,7 +109,7 @@ floyd-app/
 │           ├── db.ts           # Prisma singleton
 │           ├── mqttClient.ts   # MQTT handler (publish/subscribe)
 │           └── scheduler.ts    # Cron-based feed execution
-├── ESP8266_MQTT_Server.ino    # ESP8266 firmware (L298N + HC-SR04 + DS18B20)
+├── ESP32_MQTT_Server.ino    # ESP32 firmware (L298N + HC-SR04 + DS18B20)
 └── docs/
     ├── floyd-feeder-manual-setup.md
     ├── floyd-feeder-electronics-setup.md
@@ -171,12 +171,12 @@ floyd-app/
 
 ---
 
-## 7. ESP8266 Firmware
+## 7. ESP32 Firmware
 
-- **File:** `ESP8266_MQTT_Server.ino`
+- **File:** `ESP32_MQTT_Server.ino`
 - **Connectivity:** WiFiManager (SoftAP provisioning) → PubSubClient (MQTT)
 - **Motor Control:** L298N dual H-bridge — auger (Motor A) + impeller (Motor B)
-- **Sensors:** HC-SR04 ultrasonic (food level via container geometry), DS18B20 (temperature)
+- **Sensors:** HC-SR04 ultrasonic (food level via container geometry) (not currently connected), DS18B20 (temperature) (not currently connected)
 - **State Machine:** IDLE → PRE_SPIN → FEEDING → POST_SPIN → IDLE (with JAM_CLEAR and STOPPING states)
 - **Persistence:** EEPROM stores WiFi creds, MQTT config, container geometry
 - **TLS:** BearSSL WiFiClientSecure with `setInsecure()` for HiveMQ Cloud
@@ -185,15 +185,15 @@ floyd-app/
 
 | Pin | GPIO | Connection |
 |-----|------|------------|
-| D0 | GPIO16 | L298N IN4 (Impeller Dir 4) |
-| D1 | GPIO5 | HC-SR04 TRIG |
-| D2 | GPIO4 | HC-SR04 ECHO (via voltage divider) |
-| D3 | GPIO0 | L298N ENB (Impeller PWM) |
-| D4 | GPIO2 | DS18B20 DQ (4.7kΩ pull-up) |
-| D5 | GPIO14 | L298N ENA (Auger PWM) |
-| D6 | GPIO12 | L298N IN1 (Auger Dir 1) |
-| D7 | GPIO13 | L298N IN2 (Auger Dir 2) |
-| D8 | GPIO15 | L298N IN3 (Impeller Dir 3) |
+| GPIO16 | GPIO16 | L298N IN4 (Impeller Dir 4) |
+| GPIO5 | GPIO5 | HC-SR04 TRIG (not connected) |
+| GPIO4 | GPIO4 | HC-SR04 ECHO (not connected) |
+| GPIO0 | GPIO0 | L298N ENB (Impeller PWM) |
+| GPIO2 | GPIO2 | DS18B20 DQ (not connected) |
+| GPIO14 | GPIO14 | L298N ENA (Auger PWM) |
+| GPIO12 | GPIO12 | L298N IN1 (Auger Dir 1) |
+| GPIO13 | GPIO13 | L298N IN2 (Auger Dir 2) |
+| GPIO15 | GPIO15 | L298N IN3 (Impeller Dir 3) |
 
 ---
 
@@ -207,4 +207,4 @@ npx eas build --platform android --profile production
 npx eas build --platform ios --profile production
 ```
 
-**ESP8266:** Flash via Arduino IDE (NodeMCU 1.0, 115200 baud, 4MB flash).
+**ESP32:** Flash via Arduino IDE (NodeMCU 1.0, 115200 baud, 4MB flash).

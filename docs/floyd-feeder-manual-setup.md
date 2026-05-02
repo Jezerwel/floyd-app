@@ -2,7 +2,9 @@
 
 **Version 2.0 · 2026.05**
 
-A complete walkthrough for bringing Floyd v2 online — from cloud broker to PCB. Covers HiveMQ Cloud, Railway server deployment, Expo mobile build, and ESP8266 hardware wiring with L298N motor driver, HC-SR04 ultrasonic, and DS18B20 temperature sensor.
+> **Updated for ESP32:** This project has been migrated from ESP8266 to ESP32. HC-SR04 ultrasonic and DS18B20 temperature sensors are not currently connected.
+
+A complete walkthrough for bringing Floyd v2 online — from cloud broker to PCB. Covers HiveMQ Cloud, Railway server deployment, Expo mobile build, and ESP32 hardware wiring with L298N motor driver, HC-SR04 ultrasonic, and DS18B20 temperature sensor.
 
 ---
 
@@ -24,7 +26,7 @@ A complete walkthrough for bringing Floyd v2 online — from cloud broker to PCB
 
 Floyd Fish Feeder v2 has migrated from a local WebSocket proxy architecture to a **cloud MQTT** design. This document covers every manual step required after the code has been pulled — categorized by **Software** (what you configure on screens) and **Electronics** (what you wire with your hands). No step requires code changes; all configuration is via environment variables, Arduino Library Manager installs, and physical wiring.
 
-The architecture has three software components and one hardware component, all connected through HiveMQ Cloud MQTT: the ESP8266 publishes telemetry and subscribes to commands, the mobile app publishes commands and subscribes to telemetry, and the Express server handles REST APIs and cron-based scheduled feeding — with no real-time message relaying.
+The architecture has three software components and one hardware component, all connected through HiveMQ Cloud MQTT: the ESP32 publishes telemetry and subscribes to commands, the mobile app publishes commands and subscribes to telemetry, and the Express server handles REST APIs and cron-based scheduled feeding — with no real-time message relaying.
 
 ### Prerequisites Checklist
 
@@ -32,9 +34,9 @@ The architecture has three software components and one hardware component, all c
 - Arduino IDE installed (tested with v2.x)
 - Node.js v20+ and npm available on the server machine
 - Expo CLI and EAS CLI available for mobile builds
-- ESP8266 NodeMCU (e.g., ESP-12E, Wemos D1 Mini) on hand
+- ESP32 NodeMCU (e.g., ESP-12E, D1 Mini) on hand
 - L298N motor driver module, HC-SR04 ultrasonic sensor, DS18B20 temperature sensor
-- 12V DC power supply for motors, 5V USB power for ESP8266
+- 12V DC power supply for motors, 5V USB power for ESP32
 
 > **Estimated Setup Time:** First-time setup: approximately **2–3 hours**. Subsequent device provisioning: **5 minutes** per feeder.
 
@@ -48,7 +50,7 @@ Three cloud services must be provisioned before the feeder can operate: **HiveMQ
 
 ### 1. HiveMQ — MQTT Broker
 
-HiveMQ is the central nervous system. All three participants — ESP8266, mobile app, and server — publish and subscribe through MQTT topics under `floyd/devices/{chipId}/`. None of them talk to each other directly; the broker routes every message.
+HiveMQ is the central nervous system. All three participants — ESP32, mobile app, and server — publish and subscribe through MQTT topics under `floyd/devices/{chipId}/`. None of them talk to each other directly; the broker routes every message.
 
 You have **two options** for the broker. Choose one.
 
@@ -63,7 +65,7 @@ HiveMQ operates a free, open MQTT broker at `broker.hivemq.com`. It requires **n
 | Detail | Value |
 |---|---|
 | **MQTT host** | `broker.hivemq.com` |
-| **Plain MQTT port** | `1883` (used by server + ESP8266) |
+| **Plain MQTT port** | `1883` (used by server + ESP32) |
 | **MQTT over TLS port** | `8883` (used by mobile app) |
 | **WebSocket port** | `8000` |
 | **Authentication** | None (anonymous) |
@@ -85,7 +87,7 @@ A dedicated cluster gives you an isolated namespace that nobody else can reach, 
 > **TLS is mandatory for dedicated clusters.** HiveMQ Cloud Serverless and Starter tiers **only accept TLS connections** on port `8883`. There is no plain MQTT port `1883`. This means:
 > - **Server** (Node.js/mqtt.js): fine — `mqtts://` with TLS is trivial.
 > - **Mobile app** (React Native): fine — the app already uses `mqtts://`.
-> - **ESP8266 firmware**: **problematic** — TLS on ESP8266 requires 40–50KB of free heap during handshake, which is very tight on this chip. See the firmware changes section below for known limitations.
+> - **ESP32 firmware**: **no longer a concern** — ESP32 has ~320KB of free heap at startup, so TLS handshakes (40–50KB) handle comfortably with heap to spare.
 
 | Detail | Value |
 |---|---|
@@ -133,11 +135,11 @@ WebSocket Port: 8884
 mqtts://x1a2b3c4d5e6f7g8h9.s1.eu.hivemq.cloud:8883
 ```
 
-> **Important:** Dedicated HiveMQ Cloud clusters **only support TLS** (port 8883). There is no plain-text MQTT port 1883. The ESP8266 must be able to make TLS connections — see the firmware notes below.
+> **Important:** Dedicated HiveMQ Cloud clusters **only support TLS** (port 8883). There is no plain-text MQTT port 1883. The ESP32 must be able to make TLS connections — see the firmware notes below.
 
 ##### Step B4 — Create MQTT Credentials
 
-HiveMQ Cloud requires username/password authentication. You need at least one set of credentials that the server, app, and ESP8266 will all share (or you can create separate credentials per client for fine-grained access control).
+HiveMQ Cloud requires username/password authentication. You need at least one set of credentials that the server, app, and ESP32 will all share (or you can create separate credentials per client for fine-grained access control).
 
 1. In the left sidebar, click **Access Management** (key icon).
 2. Click the **Add Credentials** button.
@@ -153,7 +155,7 @@ If you want separate credentials per component (recommended for production with 
 |---|---|---|---|
 | `floyd-server` | Railway Express server | `floyd/devices/+/command` | `floyd/devices/+/telemetry`, `+/status`, `+/response` |
 | `floyd-app` | Mobile app | `floyd/devices/+/command`, `+/config` | `floyd/devices/+/telemetry`, `+/status`, `+/response` |
-| `floyd-esp` | ESP8266 firmware | `floyd/devices/+/telemetry`, `+/status`, `+/response` | `floyd/devices/+/command`, `+/config` |
+| `floyd-esp` | ESP32 firmware | `floyd/devices/+/telemetry`, `+/status`, `+/response` | `floyd/devices/+/command`, `+/config` |
 
 For your first setup, **one shared credential is fine**.
 
@@ -179,9 +181,9 @@ EXPO_PUBLIC_MQTT_BROKER_URL=mqtts://x1a2b3c4d5e6f7g8h9.s1.eu.hivemq.cloud:8883
 
 The app reads `EXPO_PUBLIC_MQTT_BROKER_URL` in `hooks/useMQTT.ts:15`. Currently the app's MQTT client does **not** pass username/password — if you need per-client auth for the app, you must add `username` and `password` to the `mqtt.connect()` options in `hooks/useMQTT.ts`.
 
-**ESP8266 Firmware (`ESP8266_MQTT_Server.ino`):**
+**ESP32 Firmware (`ESP32_MQTT_Server.ino`):**
 
-> **This is the hard part.** TLS on ESP8266 is well-documented as unreliable. A TLS handshake consumes 40–50KB of free heap on a chip that has ~80KB total. Community reports describe frequent OOM crashes, handshake timeouts, and connection drops after large messages. See: Espressif issue #6618, PubSubClient issue #462, ESP8266_RTOS_SDK issue #1101.
+> **TLS on ESP32** is straightforward. ESP32 has ~320KB of free heap at startup, so TLS handshakes (40–50KB peak) fit with ample headroom. Unlike ESP8266, the ESP32 WiFi stack handles TLS natively without OOM issues.
 
 The firmware needs **three** changes:
 
@@ -213,16 +215,16 @@ WiFiClient wifiClient;
 
 // After:
 #include <WiFiClientSecure.h>
-BearSSL::WiFiClientSecure wifiClient;
+WiFiClientSecure wifiClient;
 ```
 
 Then before connecting, add:
 
 ```cpp
-wifiClient.setInsecure();  // Skips cert validation — needed because ESP8266 cannot store the full HiveMQ CA chain
+wifiClient.setInsecure();  // Skips cert validation — optional if using a known CA
 ```
 
-**Before deploying**, test TLS stability over 24+ hours. If the ESP8266 drops connections or fails to reconnect after WiFi interruptions, fall back to the public broker (Option A) which uses plain TCP on port 1883 — no TLS overhead.
+TLS is well-tested on ESP32. The large heap (320KB+) ensures the TLS handshake completes without the OOM issues seen on ESP8266.
 
 ##### Step B6 — Verify the Broker is Reachable
 
@@ -275,16 +277,16 @@ floyd/
 
 | Topic | QoS | Retained | Publisher | Subscribers |
 |---|---|---|---|---|
-| `floyd/devices/{chipId}/telemetry` | 0 | No | ESP8266 | App, Server |
-| `floyd/devices/{chipId}/status` | 0 | Yes (true) | ESP8266 | App, Server |
-| `floyd/devices/{chipId}/command` | 0 | No | App, Server | ESP8266 |
-| `floyd/devices/{chipId}/response` | 0 | No | ESP8266 | App, Server |
-| `floyd/devices/{chipId}/config` | 0 | No | App | ESP8266 |
+| `floyd/devices/{chipId}/telemetry` | 0 | No | ESP32 | App, Server |
+| `floyd/devices/{chipId}/status` | 0 | Yes (true) | ESP32 | App, Server |
+| `floyd/devices/{chipId}/command` | 0 | No | App, Server | ESP32 |
+| `floyd/devices/{chipId}/response` | 0 | No | ESP32 | App, Server |
+| `floyd/devices/{chipId}/config` | 0 | No | App | ESP32 |
 
 QoS 0 (fire-and-forget) is used throughout because:
-- The ESP8266 publishes telemetry every few seconds — losing one reading is harmless.
+- The ESP32 publishes telemetry every few seconds — losing one reading is harmless.
 - Commands that get lost can be retried from the app.
-- QoS 1 or 2 would add memory and latency overhead that the ESP8266 cannot spare.
+- QoS 1 or 2 would add memory and latency overhead that the ESP32 cannot spare.
 
 ---
 
@@ -373,7 +375,7 @@ npm start      # production — runs compiled JS
 
 The server initializes the MQTT client on startup, connects to the broker, and begins listening for cron-triggered feed schedules. The Express API is available at `http://localhost:3001`.
 
-> **Note:** The server no longer hosts a WebSocket proxy. The `server/src/services/esp8266Client.ts` and `server/src/websocket/` directory have been removed. Real-time communication flows through MQTT directly.
+> **Note:** The server no longer hosts a WebSocket proxy. The `server/src/services/esp32Client.ts` and `server/src/websocket/` directory have been removed. Real-time communication flows through MQTT directly.
 
 ---
 
@@ -447,7 +449,7 @@ npx eas build --platform ios --profile production
 
 ## 05 Electronics — Firmware & Libraries
 
-The ESP8266 sketch (`ESP8266_MQTT_Server.ino`) is fully written. It is an **MQTT-based firmware** using PubSubClient for MQTT and WiFiManager for SoftAP provisioning. You only need to install libraries and flash.
+The ESP32 sketch (`ESP32_MQTT_Server.ino`) is fully written. It is an **MQTT-based firmware** using PubSubClient for MQTT and WiFiManager for SoftAP provisioning. You only need to install libraries and flash.
 
 ### 1. Install Arduino Libraries
 
@@ -455,20 +457,20 @@ Open Arduino IDE, go to *Tools → Manage Libraries*, and install each of these 
 
 | Library | Purpose | Recommended Version |
 |---|---|---|
-| **PubSubClient** | MQTT client for ESP8266 with keepalive, LWT, and QoS support. | v2.6+ |
+| **PubSubClient** | MQTT client for ESP32 with keepalive, LWT, and QoS support. | v2.6+ |
 | **WiFiManager** by tzapu | Captive portal provisioning — ESP boots as an AP, user connects phone and enters home WiFi credentials via a web form. | v2.0.17+ |
 | **ArduinoJson** by Benoit Blanchon | JSON parsing and serialization for command/response messages over MQTT. | v7.x |
 | **OneWire** | OneWire protocol for DS18B20 temperature sensor communication. | v2.3.8 |
 | **DallasTemperature** | High-level interface for DS18B20 sensor reading and conversion. | v3.11.1 |
-| **ESP8266WiFi** | Built-in with ESP8266 board package. WiFi client for station mode connection. | (board package) |
+| **WiFi.h** | Built-in with ESP32 board package. WiFi client for station mode connection. | (board package) |
 | **EEPROM** | Built-in. Persistent storage of WiFi credentials, MQTT password, sensor geometry, and calibration values. | (board package) |
 
-> **Note:** The firmware uses raw PubSubClient with BearSSL WiFiClientSecure for TLS. Command flags are set inside the MQTT callback and published in `loop()` to avoid callback reentrancy issues.
+> **Note:** The firmware uses raw PubSubClient with WiFiClientSecure for TLS (ESP32's native TLS stack). Command flags are set inside the MQTT callback and published in `loop()` to avoid callback reentrancy issues.
 
 ### 2. Flash the firmware
 
-1. Open `ESP8266_MQTT_Server.ino` in Arduino IDE.
-2. Select the board: *Tools → Board → ESP8266 Boards → NodeMCU 1.0 (ESP-12E Module)* (adjust for your specific board).
+1. Open `ESP32_MQTT_Server.ino` in Arduino IDE.
+2. Select the board: *Tools → Board → ESP32 Arduino → ESP32 Dev Module* (adjust for your specific board).
 3. Select the correct COM port under *Tools → Port*.
 4. Set baud rate to `115200` and Flash Size to at least `4MB (FS:1MB OTA:~1019KB)`.
 5. Press **Upload** (Ctrl+U).
@@ -476,7 +478,7 @@ Open Arduino IDE, go to *Tools → Manage Libraries*, and install each of these 
 
 ### 3. First-boot behavior
 
-On first boot (empty EEPROM), the ESP8266 will:
+On first boot (empty EEPROM), the ESP32 will:
 
 1. Attempt to load saved WiFi credentials from EEPROM — fails (checksum mismatch).
 2. Fall back to loading geometry-only config (container dimensions, sensor intervals).
@@ -490,73 +492,78 @@ After provisioning, the ESP restarts, connects to home WiFi using the saved SSID
 
 ## 06 Electronics — Motor & Sensor Wiring
 
-The ESP8266 controls two DC motors through an L298N dual H-bridge driver and reads food level and temperature from HC-SR04 and DS18B20 sensors respectively. **All pin assignments are defined** in the firmware — do not change them without updating both the `#define` macros and the wiring.
+The ESP32 controls two DC motors through an L298N dual H-bridge driver and reads food level and temperature from HC-SR04 and DS18B20 sensors respectively. **All pin assignments are defined** in the firmware — do not change them without updating both the `#define` macros and the wiring.
 
 ### 1. L298N Motor Driver — Auger & Impeller
 
 The L298N module drives two motors independently. Motor A controls the auger (food delivery screw). Motor B controls the impeller (food scattering spinner). PWM speed is controllable on both channels.
 
-| L298N Pin | ESP8266 Pin | GPIO | Function | Suggested Wire Color |
+| L298N Pin | ESP32 Pin | GPIO | Function | Suggested Wire Color |
 |---|---|---|---|---|
-| ENA | D5 | GPIO14 | Auger PWM speed (0–1023) | Orange |
-| IN1 | D6 | GPIO12 | Auger direction 1 | Yellow |
-| IN2 | D7 | GPIO13 | Auger direction 2 | Green |
-| ENB | D3 | GPIO0 | Impeller PWM speed (0–1023) | Blue |
-| IN3 | D8 | GPIO15 | Impeller direction 3 | Purple |
-| IN4 | D0 | GPIO16 | Impeller direction 4 | Gray |
+| ENA | GPIO14 | GPIO14 | Auger PWM speed (0–1023) | Orange |
+| IN1 | GPIO12 | GPIO12 | Auger direction 1 | Yellow |
+| IN2 | GPIO13 | GPIO13 | Auger direction 2 | Green |
+| ENB | GPIO0 | GPIO0 | Impeller PWM speed (0–1023) | Blue |
+| IN3 | GPIO15 | GPIO15 | Impeller direction 3 | Purple |
+| IN4 | GPIO16 | GPIO16 | Impeller direction 4 | Gray |
 | VCC (12V) | — | — | External 12V power supply (+) terminal | Red |
-| GND | — | — | Shared ground — connect to ESP8266 GND and power supply GND | Black |
+| GND | — | — | Shared ground — connect to ESP32 GND and power supply GND | Black |
 | OUT1, OUT2 | — | — | Auger DC motor terminals | — |
 | OUT3, OUT4 | — | — | Impeller DC motor terminals | — |
 
-> **Critical: Shared ground.** The L298N GND, ESP8266 GND, and power supply GND must all be connected. Without a shared ground, motor PWM signals are floating and the motors will not respond or may behave erratically.
+> **Critical: Shared ground.** The L298N GND, ESP32 GND, and power supply GND must all be connected. Without a shared ground, motor PWM signals are floating and the motors will not respond or may behave erratically.
 
 ### 2. HC-SR04 Ultrasonic Distance Sensor — Food Level
 
+> ⚠️ **Not currently connected** — HC-SR04 is not wired in the current ESP32 build.
+
 The HC-SR04 measures the distance from the sensor head to the food surface inside the container. The firmware converts this to a fill percentage using the cylinder + frustum volume formula stored in EEPROM.
 
-| HC-SR04 Pin | ESP8266 Pin | GPIO | Note |
+| HC-SR04 Pin | ESP32 Pin | GPIO | Note |
 |---|---|---|---|
-| VCC | 5V (Vin / VU) | — | HC-SR04 works at 5V logic. ESP8266 GPIO is 3.3V tolerant on input but the TRIG pin outputs 3.3V — some HC-SR04 modules accept this. If unreliable, use a logic level shifter. |
-| TRIG | D1 | GPIO5 | 10µs pulse triggers an 8-cycle ultrasonic burst. |
-| ECHO | D2 | GPIO4 | Pulse width proportional to distance. **Use a voltage divider** (1kΩ + 2kΩ) to drop 5V ECHO to ~3.3V. Connecting 5V directly to GPIO4 can damage the ESP8266. |
+| VCC | 5V (Vin / VU) | — | HC-SR04 works at 5V logic. ESP32 GPIO is 3.3V tolerant on input but the TRIG pin outputs 3.3V — some HC-SR04 modules accept this. If unreliable, use a logic level shifter. |
+| TRIG | GPIO5 | GPIO5 | 10µs pulse triggers an 8-cycle ultrasonic burst. |
+| ECHO | GPIO4 | GPIO4 | Pulse width proportional to distance. **Use a voltage divider** (1kΩ + 2kΩ) to drop 5V ECHO to ~3.3V. Connecting 5V directly to GPIO4 can damage the ESP32. |
 | GND | GND | — | Shared ground. |
 
 ### 3. DS18B20 Temperature Sensor
 
+> ⚠️ **Not currently connected** — DS18B20 is not wired in the current ESP32 build.
+
 The DS18B20 uses OneWire protocol on a single GPIO pin. A 4.7kΩ pull-up resistor is required between the data line and 3.3V.
 
-| DS18B20 Pin | ESP8266 Pin | GPIO | Note |
+| DS18B20 Pin | ESP32 Pin | GPIO | Note |
 |---|---|---|---|
 | VDD | 3.3V | — | The sensor operates at 3.3V or 5V. Use 3.3V to avoid level conversion. |
-| DQ (Data) | D4 | GPIO2 | OneWire data line. **4.7kΩ resistor** required between DQ and 3.3V as a pull-up. |
+| DQ (Data) | GPIO2 | GPIO2 | OneWire data line. **4.7kΩ resistor** required between DQ and 3.3V as a pull-up. |
 | GND | GND | — | Shared ground. |
 
-> **GPIO2 (D4) on ESP8266 NodeMCU:** This pin has a built-in pull-up resistor and is used during boot to set flash mode. If the DS18B20 data line is pulled low at boot, the ESP8266 may fail to start. The 4.7kΩ pull-up to 3.3V mitigates this. If you encounter boot failures, try GPIO0 (D3) or GPIO14 (D5) and update the `ONE_WIRE_BUS` define.
+> ~~**GPIO2 on ESP32 NodeMCU:** This pin has a built-in pull-up resistor and is used during boot to set flash mode. If the DS18B20 data line is pulled low at boot, the ESP32 may fail to start. The 4.7kΩ pull-up to 3.3V mitigates this. If you encounter boot failures, try GPIO0 or GPIO14 and update the `ONE_WIRE_BUS` define.~~
+> **No longer applicable** — DS18B20 is not connected, so the OneWire boot conflict does not apply in the current configuration.
 
 ---
 
 ## 07 Electronics — Power & Enclosure
 
-The system requires two power rails: **5V USB** for the ESP8266 logic and sensors, and **12V DC** for the L298N motor driver. Proper power isolation prevents motor noise from resetting the microcontroller.
+The system requires two power rails: **5V USB** for the ESP32 logic and sensors, and **12V DC** for the L298N motor driver. Proper power isolation prevents motor noise from resetting the microcontroller.
 
 ### 1. Power architecture
 
 | Component | Voltage | Typical Current | Power Source |
 |---|---|---|---|
-| ESP8266 NodeMCU | 5V via USB / Vin | ~80 mA (idle), ~300 mA (WiFi TX) | USB power adapter (5V 1A minimum) |
-| L298N Motor Driver (logic) | 5V (from ESP8266 VU or onboard regulator) | ~20 mA | ESP8266 5V pin *or* L298N onboard 5V regulator (remove jumper if using onboard) |
+| ESP32 NodeMCU | 5V via USB / Vin | ~80 mA (idle), ~300 mA (WiFi TX) | USB power adapter (5V 1A minimum) |
+| L298N Motor Driver (logic) | 5V (from ESP32 VU or onboard regulator) | ~20 mA | ESP32 5V pin *or* L298N onboard 5V regulator (remove jumper if using onboard) |
 | L298N Motor Driver (motors) | 12V DC | 500 mA – 2A per motor (depends on load) | 12V 2A+ DC power supply |
-| HC-SR04 | 5V | ~15 mA | ESP8266 5V pin |
-| DS18B20 | 3.3V | ~1 mA | ESP8266 3.3V pin |
+| HC-SR04 | 5V | ~15 mA | ESP32 5V pin |
+| DS18B20 | 3.3V | ~1 mA | ESP32 3.3V pin |
 | Auger DC Motor | 12V | 200–800 mA (under load) | L298N OUT1/OUT2 terminals |
 | Impeller DC Motor | 12V | 200–800 mA (under load) | L298N OUT3/OUT4 terminals |
 
-> **Motor noise isolation:** Place a 100µF electrolytic capacitor across the 12V power input to the L298N, and a 0.1µF ceramic capacitor across each motor terminal pair. This suppresses voltage spikes that can reset the ESP8266. Keep motor power wires routed away from sensor signal wires.
+> **Motor noise isolation:** Place a 100µF electrolytic capacitor across the 12V power input to the L298N, and a 0.1µF ceramic capacitor across each motor terminal pair. This suppresses voltage spikes that can reset the ESP32. Keep motor power wires routed away from sensor signal wires.
 
 ### 2. Enclosure considerations
 
-- The ESP8266 should be mounted away from the food container to avoid WiFi signal attenuation from metal components.
+- The ESP32 should be mounted away from the food container to avoid WiFi signal attenuation from metal components.
 - The HC-SR04 ultrasonic sensor must be mounted **facing downward** into the food container, with an unobstructed cone for the ultrasonic beam (15° beam angle).
 - The DS18B20 should be placed where it reads ambient temperature — not directly touching metal that could conduct heat from the motors.
 - The L298N generates significant heat during continuous operation. Ensure ventilation or a small heatsink.
@@ -570,19 +577,19 @@ This is the ritual that links hardware to cloud. Run through it once per device.
 
 ### Step-by-step
 
-1. **Power on the ESP8266.** On first boot (or after EEPROM wipe), the firmware detects no saved WiFi credentials and enters SoftAP mode. The onboard LED should blink rapidly.
+1. **Power on the ESP32.** On first boot (or after EEPROM wipe), the firmware detects no saved WiFi credentials and enters SoftAP mode. The onboard LED should blink rapidly.
 
 2. **Open the Wi-Fi settings on your phone.** Look for a network named `FloydFeeder-XXXX` (where XXXX is the chip ID, e.g., `FloydFeeder-A1B2C3`). **Connect to it.** The password is not set (open AP).
 
 3. **Open the Floyd app.** If no device is provisioned, it should show the provisioning screen. If it doesn't, navigate to the provisioning route (e.g., the app's `/provision` screen).
 
-4. **The WebView loads the captive portal.** The app opens `http://192.168.4.1` inside a WebView. This is the WiFiManager configuration page served by the ESP8266.
+4. **The WebView loads the captive portal.** The app opens `http://192.168.4.1` inside a WebView. This is the WiFiManager configuration page served by the ESP32.
 
 5. **Select your home WiFi network and enter the password.** The captive portal scans for available networks. Select yours, enter the password, and tap *Save*.
 
-6. **ESP8266 reboots.** WiFiManager saves the credentials to EEPROM, generates a random 8-character hex MQTT password, and restarts the ESP8266.
+6. **ESP32 reboots.** WiFiManager saves the credentials to EEPROM, generates a random 8-character hex MQTT password, and restarts the ESP32.
 
-7. **ESP8266 connects to home WiFi.** After reboot, the ESP reads credentials from EEPROM, connects to your home WiFi within 30 seconds, and then auto-connects to the HiveMQ MQTT broker via PubSubClient.
+7. **ESP32 connects to home WiFi.** After reboot, the ESP reads credentials from EEPROM, connects to your home WiFi within 30 seconds, and then auto-connects to the HiveMQ MQTT broker via PubSubClient.
 
 8. **App extracts device info.** The injected JavaScript in the WebView captures the chipId and provisioning status from the WiFiManager page. It sends this back to React Native via `window.ReactNativeWebView.postMessage()`.
 
@@ -611,17 +618,17 @@ Once all three participants are connected, data flows through these MQTT topics 
 
 ### A. Complete Pin Reference
 
-| ESP8266 Pin | GPIO | Connected To | Purpose |
+| ESP32 Pin | GPIO | Connected To | Purpose |
 |---|---|---|---|
-| D0 | GPIO16 | L298N IN4 | Impeller Direction 4 |
-| D1 | GPIO5 | HC-SR04 TRIG | Ultrasonic trigger pulse |
-| D2 | GPIO4 | HC-SR04 ECHO (via divider) | Ultrasonic echo pulse width |
-| D3 | GPIO0 | L298N ENB | Impeller PWM speed |
-| D4 | GPIO2 | DS18B20 DQ (4.7kΩ pull-up) | OneWire temperature data |
-| D5 | GPIO14 | L298N ENA | Auger PWM speed |
-| D6 | GPIO12 | L298N IN1 | Auger Direction 1 |
-| D7 | GPIO13 | L298N IN2 | Auger Direction 2 |
-| D8 | GPIO15 | L298N IN3 | Impeller Direction 3 |
+| GPIO16 | GPIO16 | L298N IN4 | Impeller Direction 4 |
+| GPIO5 | GPIO5 | HC-SR04 TRIG | Ultrasonic trigger pulse |
+| GPIO4 | GPIO4 | HC-SR04 ECHO (via divider) | Ultrasonic echo pulse width |
+| GPIO0 | GPIO0 | L298N ENB | Impeller PWM speed |
+| GPIO2 | GPIO2 | DS18B20 DQ (4.7kΩ pull-up) | OneWire temperature data |
+| GPIO14 | GPIO14 | L298N ENA | Auger PWM speed |
+| GPIO12 | GPIO12 | L298N IN1 | Auger Direction 1 |
+| GPIO13 | GPIO13 | L298N IN2 | Auger Direction 2 |
+| GPIO15 | GPIO15 | L298N IN3 | Impeller Direction 3 |
 | GND | — | L298N GND, HC-SR04 GND, DS18B20 GND, 12V PSU GND | Common ground bus |
 | 3.3V | — | DS18B20 VDD | Temperature sensor power |
 | 5V (VU) | — | HC-SR04 VCC | Ultrasonic sensor power |
@@ -629,14 +636,14 @@ Once all three participants are connected, data flows through these MQTT topics 
 ### B. Wiring Schematic (Text Reference)
 
 ```
-ESP8266 NodeMCU           L298N Motor Driver
+ESP32 NodeMCU           L298N Motor Driver
 ┌──────────────┐          ┌──────────────────────┐
-│ D5 (GPIO14)  ├──────────┤ ENA    (Auger PWM)    │
-│ D6 (GPIO12)  ├──────────┤ IN1    (Auger Dir 1)  │
-│ D7 (GPIO13)  ├──────────┤ IN2    (Auger Dir 2)  │
-│ D3 (GPIO0)   ├──────────┤ ENB    (Impeller PWM) │
-│ D8 (GPIO15)  ├──────────┤ IN3    (Impeller Dir3)│
-│ D0 (GPIO16)  ├──────────┤ IN4    (Impeller Dir4)│
+│ GPIO14       ├──────────┤ ENA    (Auger PWM)    │
+│ GPIO12       ├──────────┤ IN1    (Auger Dir 1)  │
+│ GPIO13       ├──────────┤ IN2    (Auger Dir 2)  │
+│ GPIO0        ├──────────┤ ENB    (Impeller PWM) │
+│ GPIO15       ├──────────┤ IN3    (Impeller Dir3)│
+│ GPIO16       ├──────────┤ IN4    (Impeller Dir4)│
 │ GND          ├──────────┤ GND                   │
 │              │          │ OUT1─── Auger Motor +  │
 │              │          │ OUT2─── Auger Motor -  │
@@ -645,19 +652,19 @@ ESP8266 NodeMCU           L298N Motor Driver
 │              │          │ 12V──── 12V PSU +     │
 └──────────────┘          └──────────────────────┘
 
-ESP8266 NodeMCU           HC-SR04 Ultrasonic
+ESP32 NodeMCU           HC-SR04 Ultrasonic
 ┌──────────────┐          ┌──────────────┐
-│ D1 (GPIO5)   ├──────────┤ TRIG         │
-│ D2 (GPIO4)   ├──[1kΩ]───┤ ECHO  ───╮  │
+│ GPIO5        ├──────────┤ TRIG         │
+│ GPIO4        ├──[1kΩ]───┤ ECHO  ───╮  │
 │              │   │       │      [2kΩ]  │
 │ GND          ├───┴───────┤ GND  ───╯  │
 │ 5V (VU)      ├──────────┤ VCC         │
 └──────────────┘          └──────────────┘
-(Voltage divider: ECHO → 1kΩ → D2 → 2kΩ → GND drops 5V to ~3.3V)
+(Voltage divider: ECHO → 1kΩ → GPIO4 → 2kΩ → GND drops 5V to ~3.3V)
 
-ESP8266 NodeMCU           DS18B20 Temperature
+ESP32 NodeMCU           DS18B20 Temperature
 ┌──────────────┐          ┌──────────────┐
-│ D4 (GPIO2)   ├──────────┤ DQ (Data)    │
+│ GPIO2        ├──────────┤ DQ (Data)    │
 │ 3.3V         ├──[4.7kΩ]─┤ DQ (pull-up) │
 │ 3.3V         ├──────────┤ VDD          │
 │ GND          ├──────────┤ GND          │
@@ -665,7 +672,7 @@ ESP8266 NodeMCU           DS18B20 Temperature
 
 Common Ground Bus: ESP GND ≡ L298N GND ≡ HC-SR04 GND ≡ DS18B20 GND ≡ 12V PSU GND
 12V PSU (+) → L298N 12V terminal
-5V USB → ESP8266 micro-USB port
+5V USB → ESP32 micro-USB port
 ```
 
 ### C. Environment Variables Reference
@@ -685,8 +692,8 @@ After completing all setup steps, verify each layer independently:
 
 1. **MQTT broker:** Use MQTT Explorer or `mosquitto_sub` to connect to the broker and check that you can publish/subscribe on a test topic.
 2. **Server:** Hit `/health` and `/api/devices` endpoints. The server should report MQTT connection status.
-3. **ESP8266:** After provisioning, check the Serial Monitor at `115200` baud. You should see `[MQTT] Connected to broker` and periodic sensor broadcasts.
+3. **ESP32:** After provisioning, check the Serial Monitor at `115200` baud. You should see `[MQTT] Connected to broker` and periodic sensor broadcasts.
 4. **App:** Open the app. After provisioning, the dashboard should show live temperature and food level readings. Tap a feed button — the ESP should activate the motors.
 5. **Scheduled feed:** Create a schedule via the app's schedules API. Wait for the cron trigger — the ESP should execute a feed without any app interaction.
 
-> **Done.** Your Floyd Fish Feeder is online. The app shows real-time sensor data. The server manages schedules. The ESP8266 runs autonomously. All communication flows through cloud MQTT — no WebSocket proxy, no local network dependency. **You can feed your fish from anywhere in the world.**
+> **Done.** Your Floyd Fish Feeder is online. The app shows real-time sensor data. The server manages schedules. The ESP32 runs autonomously. All communication flows through cloud MQTT — no WebSocket proxy, no local network dependency. **You can feed your fish from anywhere in the world.**

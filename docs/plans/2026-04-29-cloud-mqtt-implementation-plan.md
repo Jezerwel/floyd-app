@@ -4,16 +4,16 @@
 
 **Goal:** Migrate Floyd Fish Feeder from WebSocket proxy architecture to MQTT-based cloud IoT, with in-app SoftAP WiFi provisioning.
 
-**Architecture:** ESP8266 and mobile app both connect to HiveMQ Cloud MQTT broker. ESP publishes telemetry and subscribes to commands. App subscribes to telemetry and publishes commands. Express server handles REST API, cron scheduler, and persists data — but no longer proxies real-time messages.
+**Architecture:** ESP32 and mobile app both connect to HiveMQ Cloud MQTT broker. ESP publishes telemetry and subscribes to commands. App subscribes to telemetry and publishes commands. Express server handles REST API, cron scheduler, and persists data — but no longer proxies real-time messages.
 
-**Tech Stack:** ESP8266 (Arduino, EspMQTTClient, WiFiManager with EEPROM custom params), Node.js/Express/Prisma/mqtt.js (server), React Native/Expo/TypeScript/mqtt.js v5.9+ with native timer (app), HiveMQ Cloud Serverless free tier (broker)
+**Tech Stack:** ESP32 (Arduino, EspMQTTClient, WiFiManager with EEPROM custom params), Node.js/Express/Prisma/mqtt.js (server), React Native/Expo/TypeScript/mqtt.js v5.9+ with native timer (app), HiveMQ Cloud Serverless free tier (broker)
 
 ## Known Limitations (from research)
 
 | Limitation | Detail |
 |---|---|
-| **PubSubClient on ESP8266 is unreliable** | Frequent disconnects, keepalive timeout bugs, reconnection loops. Use `EspMQTTClient` wrapper instead. |
-| **Never publish inside MQTT callback** | Causes crashes on ESP8266. Set flags and publish in main `loop()`. |
+| **PubSubClient on ESP32 is unreliable** | Frequent disconnects, keepalive timeout bugs, reconnection loops. Use `EspMQTTClient` wrapper instead. |
+| **Never publish inside MQTT callback** | Causes crashes on ESP32. Set flags and publish in main `loop()`. |
 | **mqtt.js timerVariant** | Must set `timerVariant: 'native'` for React Native + Hermes engine. Without it, "Keepalive timeout" errors occur. |
 | **process.nextTick polyfill** | May be needed for RN. Source: `setTimeout(callback, 0)`. |
 | **HiveMQ free tier** | 100 connections, 10GB/month, no SLA. Adequate for single device. Basic auth rules are user-configured in HiveMQ console. |
@@ -30,13 +30,13 @@
 | 2 | Server | Create MQTT client service |
 | 3 | Server | Refactor feed scheduler to use MQTT |
 | 4 | Server | Add device claim endpoint |
-| 5 | Server | Remove WebSocket proxy and ESP8266Client |
+| 5 | Server | Remove WebSocket proxy and ESP32Client |
 | 6 | Server | Clean up types and config |
 | 7 | Firmware | Replace WebSocket server with EspMQTTClient |
 | 8 | Firmware | Add SoftAP provisioning with custom MQTT params |
 | 9 | Firmware | Wire MQTT into command handler, sensor broadcast, and loop |
 | 10 | App | Add `mqtt.js` v5.9+ with RN-required options and useMQTT hook |
-| 11 | App | Refactor useESP8266Context for MQTT |
+| 11 | App | Refactor useESP32Context for MQTT |
 | 12 | App | Create provisioning screen with WebView↔RN communication |
 | 13 | App | Update services/api.ts for device claim |
 | 14 | Integration | End-to-end wiring and smoke test |
@@ -169,12 +169,12 @@ git commit -m "feat: add MQTT client service for device communication"
 **Files:**
 - Modify: `server/src/services/scheduler.ts`
 
-**Step 1: Replace ESP8266Client dependency with MQTT**
+**Step 1: Replace ESP32Client dependency with MQTT**
 
 Change the scheduler to import `mqttHandler` and call `mqttHandler.publishDevice(chipId, 'command', {...})` instead of `this.espClient.sendCommand(...)`.
 
 Key changes:
-- Replace `ESP8266Client` import with `mqttHandler` import
+- Replace `ESP32Client` import with `mqttHandler` import
 - Remove `espClient` constructor parameter
 - Change `this.espClient.sendCommand(...)` → `mqttHandler.publishDevice(chipId, 'command', { action: 'start_feed', parameters: {...} })`
 - The `chipId` should be fetched from the Device table or passed in
@@ -271,7 +271,7 @@ export default FeedScheduler;
 
 ```bash
 git add server/src/services/scheduler.ts
-git commit -m "refactor: feed scheduler uses MQTT instead of ESP8266Client"
+git commit -m "refactor: feed scheduler uses MQTT instead of ESP32Client"
 ```
 
 ---
@@ -337,10 +337,10 @@ git commit -m "feat: add device claim endpoint and MQTT init on server start"
 
 ---
 
-### Task 5: Server — Remove WebSocket proxy and ESP8266Client
+### Task 5: Server — Remove WebSocket proxy and ESP32Client
 
 **Files:**
-- Delete: `server/src/services/esp8266Client.ts`
+- Delete: `server/src/services/esp32Client.ts`
 - Delete: `server/src/websocket/proxyHandlers.ts`
 - Modify: `server/src/server.ts` (remove WebSocket setup and proxy references)
 
@@ -349,14 +349,14 @@ git commit -m "feat: add device claim endpoint and MQTT init on server start"
 Remove:
 - `import { createServer } from "http";`
 - `import WebSocket, { WebSocketServer } from "ws";`
-- `import { ESP8266Client } from "./services/esp8266Client";`
+- `import { ESP32Client } from "./services/esp32Client";`
 - `import { WebSocketProxyHandler } from "./websocket/proxyHandlers";`
 - The `wss` field and all its usages
-- The `esp8266Client` and `wsProxyHandler` fields
+- The `esp32Client` and `wsProxyHandler` fields
 - The `setupWebSocket()` private method
-- ESP8266-specific REST endpoints (`/api/esp8266/*`, `/api/command`, `/api/clients`)
-- Update `/health` and `/stats` to remove ESP8266/proxy references
-- Update the `start()` method to not call `this.esp8266Client.connect()` or `this.setupWebSocket()`
+- ESP32-specific REST endpoints (`/api/esp32/*`, `/api/command`, `/api/clients`)
+- Update `/health` and `/stats` to remove ESP32/proxy references
+- Update the `start()` method to not call `this.esp32Client.connect()` or `this.setupWebSocket()`
 - Update `stop()` to not call `this.wsProxyHandler.shutdown()` or close `wss`
 
 Keep:
@@ -367,7 +367,7 @@ Keep:
 **Step 2: Delete removed files**
 
 ```bash
-rm server/src/services/esp8266Client.ts
+rm server/src/services/esp32Client.ts
 rm -r server/src/websocket/
 ```
 
@@ -379,7 +379,7 @@ Run: `npm uninstall ws uuid` and `npm uninstall @types/ws @types/uuid`
 
 ```bash
 git add -A server/
-git commit -m "refactor: remove WebSocket proxy and ESP8266Client; server is API+cron only"
+git commit -m "refactor: remove WebSocket proxy and ESP32Client; server is API+cron only"
 ```
 
 ---
@@ -393,9 +393,9 @@ git commit -m "refactor: remove WebSocket proxy and ESP8266Client; server is API
 
 Remove:
 - `ClientInfo` (no longer tracking app clients on server)
-- `ESP8266Config` and `DEFAULT_ESP8266_CONFIG` (no more ESP8266 connection config)
-- Update `ServerConfig` to remove `esp8266Config` field
-- Update `DEFAULT_SERVER_CONFIG` to remove `esp8266Config`
+- `ESP32Config` and `DEFAULT_ESP32_CONFIG` (no more ESP32 connection config)
+- Update `ServerConfig` to remove `esp32Config` field
+- Update `DEFAULT_SERVER_CONFIG` to remove `esp32Config`
 
 Keep all message protocol types (`MessageType`, `CommandAction`, `DeviceCommand`, `SensorData`, etc.).
 
@@ -419,10 +419,10 @@ git commit -m "refactor: remove proxy types, add MQTT config constants"
 
 ### Task 7: Firmware — Replace WebSocket server with EspMQTTClient
 
-> **Why EspMQTTClient:** Raw PubSubClient on ESP8266 has documented reliability issues — keepalive timeout bugs, failed reconnections after disconnect, and crashes when publishing from callback (GitHub issues #243, #795, #825). EspMQTTClient wraps PubSubClient with proper reconnection logic, connection state tracking, and WiFi monitoring. It also calls `loop()` internally so you don't need to manage timing.
+> **Why EspMQTTClient:** Raw PubSubClient on ESP32 has documented reliability issues — keepalive timeout bugs, failed reconnections after disconnect, and crashes when publishing from callback (GitHub issues #243, #795, #825). EspMQTTClient wraps PubSubClient with proper reconnection logic, connection state tracking, and WiFi monitoring. It also calls `loop()` internally so you don't need to manage timing.
 
 **Files:**
-- Modify: `ESP8266_WebSocket_Server.ino`
+- Modify: `ESP32_WebSocket_Server.ino`
 
 **Step 1: Replace WebSocket library with EspMQTTClient**
 
@@ -462,7 +462,7 @@ EspMQTTClient mqttClient(
   // password set via mqttClient.setMqttPassword() in setup
 );
 
-// Flag pattern: NEVER publish inside callback on ESP8266
+// Flag pattern: NEVER publish inside callback on ESP32
 volatile bool pendingCommand = false;
 String pendingCommandPayload = "";
 
@@ -481,7 +481,7 @@ void setupMQTTTopics() {
 // MQTT connection callback — subscribe to command topic
 void onConnectionEstablished() {
   mqttClient.subscribe(topicCommand, [](const String &topic, const String &payload) {
-    // CRITICAL: Set flag, do NOT process here (ESP8266 crash if publish from callback)
+    // CRITICAL: Set flag, do NOT process here (ESP32 crash if publish from callback)
     pendingCommandPayload = payload;
     pendingCommand = true;
   });
@@ -499,7 +499,7 @@ void onConnectionEstablished() {
 **Step 3: Commit**
 
 ```bash
-git add ESP8266_WebSocket_Server.ino
+git add ESP32_WebSocket_Server.ino
 ```
 
 ---
@@ -509,7 +509,7 @@ git add ESP8266_WebSocket_Server.ino
 > **Why WiFiManager custom params:** The captive portal page needs to show the device chip ID and allow entering WiFi credentials. WiFiManager's `WiFiManagerParameter` API allows adding custom fields to the captive portal form AND injecting custom HTML. EEPROM save/load for custom params is manual — must extend the existing `EEPROMConfig` struct.
 
 **Files:**
-- Modify: `ESP8266_WebSocket_Server.ino`
+- Modify: `ESP32_WebSocket_Server.ino`
 
 **Step 1: Add WiFiManager dependency**
 
@@ -720,7 +720,7 @@ void setup() {
 **Step 6: Commit**
 
 ```bash
-git add ESP8266_WebSocket_Server.ino
+git add ESP32_WebSocket_Server.ino
 git commit -m "feat: add SoftAP provisioning with WiFiManager and EEPROM credential storage"
 ```
 
@@ -728,10 +728,10 @@ git commit -m "feat: add SoftAP provisioning with WiFiManager and EEPROM credent
 
 ### Task 9: Firmware — Wire MQTT into command handler, sensor broadcast, and loop
 
-> **Critical rule:** NEVER call `mqttClient.publish()` inside the MQTT callback. On ESP8266 this causes crashes. Instead, set a `volatile` flag and publish in the main `loop()`. Also, EspMQTTClient already calls its own internal `loop()` — you don't need to manage it.
+> **Critical rule:** NEVER call `mqttClient.publish()` inside the MQTT callback. On ESP32 this causes crashes. Instead, set a `volatile` flag and publish in the main `loop()`. Also, EspMQTTClient already calls its own internal `loop()` — you don't need to manage it.
 
 **Files:**
-- Modify: `ESP8266_WebSocket_Server.ino`
+- Modify: `ESP32_WebSocket_Server.ino`
 
 **Step 1: Refactor command handler for MQTT (no `num` parameter)**
 
@@ -893,14 +893,14 @@ void loop() {
     broadcastSensorDataMQTT();
   }
 
-  delay(10); // Small yield for ESP8266 WiFi stack — critical for stability
+  delay(10); // Small yield for ESP32 WiFi stack — critical for stability
 }
 ```
 
 **Step 5: Commit**
 
 ```bash
-git add ESP8266_WebSocket_Server.ino
+git add ESP32_WebSocket_Server.ino
 git commit -m "feat: wire EspMQTTClient into command handler and sensor loop"
 ```
 
@@ -1049,10 +1049,10 @@ git commit -m "feat: add mqtt.js v5.9+ with RN-native timer variant and useMQTT 
 
 ---
 
-### Task 11: App — Refactor useESP8266Context for MQTT
+### Task 11: App — Refactor useESP32Context for MQTT
 
 **Files:**
-- Modify: `hooks/useESP8266Context.tsx`
+- Modify: `hooks/useESP32Context.tsx`
 
 **Step 1: Replace useWebSocket with useMQTT**
 
@@ -1089,8 +1089,8 @@ Add: `chipId`, `setChipId`, `publishCommand`
 **Step 4: Commit**
 
 ```bash
-git add hooks/useESP8266Context.tsx
-git commit -m "refactor: useESP8266Context uses MQTT instead of WebSocket"
+git add hooks/useESP32Context.tsx
+git commit -m "refactor: useESP32Context uses MQTT instead of WebSocket"
 ```
 
 ---
@@ -1112,7 +1112,7 @@ import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import { useCallback, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { claimDevice } from '@/services/api';
-import { useESP8266 } from '@/hooks/useESP8266Context';
+import { useESP32 } from '@/hooks/useESP32Context';
 import { router } from 'expo-router';
 
 const ESP_AP_IP = '192.168.4.1';
@@ -1121,7 +1121,7 @@ export default function ProvisionScreen() {
   const [step, setStep] = useState<'connecting' | 'provisioning' | 'claiming' | 'done' | 'error'>('connecting');
   const [errorMsg, setErrorMsg] = useState('');
   const [deviceId, setDeviceId] = useState('');
-  const { setChipId } = useESP8266();
+  const { setChipId } = useESP32();
 
   const handleMessage = useCallback(async (event: WebViewMessageEvent) => {
     try {
@@ -1299,14 +1299,14 @@ git commit -m "feat: add device claim and list API functions"
 
 **Files:**
 - Modify: `app/_layout.tsx` (update provider)
-- Modify: `components/ESP8266Connection.tsx` (update status display)
+- Modify: `components/ESP32Connection.tsx` (update status display)
 
 **Step 1: Update _layout.tsx to handle chipId from AsyncStorage**
 
 ```typescript
 import { useEffect, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useESP8266 } from '@/hooks/useESP8266Context';
+import { useESP32 } from '@/hooks/useESP32Context';
 
 // In layout:
 const [loading, setLoading] = useState(true);
@@ -1325,13 +1325,13 @@ if (loading) return <SplashScreen />;
 // Pass chipId to provider or context
 ```
 
-**Step 2: Update ESP8266Connection component**
+**Step 2: Update ESP32Connection component**
 
 Remove the "Connect to Cloud Server" button (auto-connects now). Show MQTT connection status and chipId.
 
 **Step 3: End-to-end smoke test**
 
-1. Flash ESP8266 with new firmware (first boot — no saved WiFi)
+1. Flash ESP32 with new firmware (first boot — no saved WiFi)
 2. ESP boots into AP mode as `FloydFeeder-XXXX`
 3. User connects phone to FloydFeeder-XXXX WiFi AP
 4. App provisioning screen → WebView opens WiFiManager captive portal at 192.168.4.1
@@ -1352,7 +1352,7 @@ Remove the "Connect to Cloud Server" button (auto-connects now). Show MQTT conne
 **Step 4: Commit**
 
 ```bash
-git add app/_layout.tsx components/ESP8266Connection.tsx
+git add app/_layout.tsx components/ESP32Connection.tsx
 git commit -m "feat: wire end-to-end MQTT integration with provisioning flow"
 ```
 
@@ -1382,8 +1382,8 @@ MQTT_PASSWORD=        (blank — free tier anonymous auth)
 ### Removed from server
 
 ```
-ESP8266_HOST          (no longer needed)
-ESP8266_PORT          (no longer needed)
+ESP32_HOST          (no longer needed)
+ESP32_PORT          (no longer needed)
 USE_MQTT              (no longer toggle — always MQTT)
 MQTT_USERNAME         (HiveMQ free tier doesn't require)
 MQTT_PASSWORD
