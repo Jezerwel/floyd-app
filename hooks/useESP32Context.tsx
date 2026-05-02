@@ -7,7 +7,7 @@ import React, {
   useMemo,
   useState,
 } from "react";
-import { useMountEffect } from "./useMountEffect";
+import { useMDNS } from "./useMDNS";
 import useMQTT, { MQTTMessage } from "./useMQTT";
 
 interface FeederConfig {
@@ -35,7 +35,30 @@ interface ESP32Data {
   feederConfig?: FeederConfig;
   lastUpdate?: number;
   esp32Connected?: boolean;
-  proxyConnected?: boolean;
+  schedules?: Schedule[];
+}
+
+interface FeedLogEntry {
+  id: string;
+  timestamp: string;
+  augerSpeed: number;
+  impellerSpeed: number;
+  feedMs: number;
+  success: boolean;
+  errorMessage?: string;
+}
+
+interface Schedule {
+  id: string;
+  label: string;
+  time: string;
+  daysOfWeek: string;
+  augerSpeed: number;
+  impellerSpeed: number;
+  preSpinMs: number;
+  feedMs: number;
+  postSpinMs: number;
+  enabled: boolean;
 }
 
 interface FeedParams {
@@ -68,7 +91,9 @@ interface ESP32ContextType {
   autoRefreshInterval: number;
   setAutoRefreshInterval: (interval: number) => void;
   esp32Status: "connected" | "disconnected" | "unknown";
-  mqttBrokerUrl: string;
+  feedLogs: FeedLogEntry[];
+  setFeedLogs: (logs: FeedLogEntry[]) => void;
+  publishScheduleSync: (schedules: Schedule[]) => boolean;
 }
 
 const ESP32Context = createContext<ESP32ContextType | null>(null);
@@ -87,9 +112,15 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   const [chipId, setChipIdState] = useState<string | null>(initialChipId);
   const [deviceData, setDeviceData] = useState<ESP32Data>({});
   const [isAutoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
-  const [autoRefreshInterval, setAutoRefreshInterval] = useState(
-    DEFAULT_AUTO_REFRESH_INTERVAL
-  );
+  const [autoRefreshInterval, setAutoRefreshInterval] = useState(DEFAULT_AUTO_REFRESH_INTERVAL);
+  const [feedLogs, setFeedLogsState] = useState<FeedLogEntry[]>([]);
+
+  const {
+    discoveredFeeder,
+    isScanning: _isMdnsScanning,
+    startScan,
+    stopScan: _stopScan,
+  } = useMDNS(chipId);
 
   const handleMessage = useCallback((message: MQTTMessage) => {
     switch (message.type) {
@@ -105,26 +136,49 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
           augerSpeed: (message.data.augerSpeed as number) ?? prev.augerSpeed,
           impellerSpeed: (message.data.impellerSpeed as number) ?? prev.impellerSpeed,
           lastUpdate: message.timestamp,
-          proxyConnected: true,
           esp32Connected: true,
         }));
         break;
-      case "control_response":
+      case "control_response": {
         setDeviceData((prev) => ({
           ...prev,
           motorState: (message.data.motorState as ESP32Data["motorState"]) ?? prev.motorState,
           lastUpdate: message.timestamp,
           esp32Connected: true,
         }));
+
+        // Accumulate feed log on feed_complete
+        if (message.data.action === "feed_complete") {
+          const newEntry: FeedLogEntry = {
+            id: Date.now().toString(36),
+            timestamp: new Date().toISOString(),
+            augerSpeed: (message.data.augerSpeed as number) || 768,
+            impellerSpeed: (message.data.impellerSpeed as number) || 1023,
+            feedMs: (message.data.feedMs as number) || 3000,
+            success: (message.data.success as boolean) !== false,
+          };
+          setFeedLogsState((prev) => {
+            const next = [newEntry, ...prev].slice(0, 100);
+            AsyncStorage.setItem("floyd-feedlogs", JSON.stringify(next)).catch(console.error);
+            return next;
+          });
+        }
         break;
+      }
       case "status":
         setDeviceData((prev) => ({
           ...prev,
           feederConfig: (message.data.feederConfig as FeederConfig) ?? prev.feederConfig,
           wifiRssi: (message.data.wifiRssi as number) ?? prev.wifiRssi,
           lastUpdate: message.timestamp,
-          proxyConnected: true,
           esp32Connected: (message.data.connected as boolean) !== false,
+        }));
+        break;
+      case "schedules_list":
+        setDeviceData((prev) => ({
+          ...prev,
+          schedules: (message.data as unknown as Schedule[]) ?? prev.schedules,
+          lastUpdate: message.timestamp,
         }));
         break;
       case "error":
@@ -138,35 +192,39 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     isConnecting,
     error,
     connectionAttempts,
-    brokerUrl,
     connect: mqttConnect,
     disconnect: mqttDisconnect,
     publish,
     resetConnection,
   } = useMQTT(chipId, { onMessage: handleMessage });
 
-  useMountEffect(() => {
+  // When chipId is set, start mDNS scan; when feeder discovered, connect MQTT
+  useMemo(() => {
     if (chipId) {
-      mqttConnect(chipId);
+      startScan();
     }
+    return undefined;
+  }, [chipId, startScan]);
 
-    return () => {
-      mqttDisconnect();
-    };
-  });
+  useMemo(() => {
+    if (discoveredFeeder && chipId) {
+      const brokerUrl = `mqtt://${discoveredFeeder.host}:${discoveredFeeder.port}`;
+      mqttConnect(brokerUrl, chipId);
+    }
+    return undefined;
+  }, [discoveredFeeder, chipId, mqttConnect]);
 
   const setChipId = useCallback((nextChipId: string | null) => {
     setChipIdState(nextChipId);
 
     if (nextChipId) {
       AsyncStorage.setItem("floydChipId", nextChipId).catch(console.error);
-      mqttConnect(nextChipId);
       return;
     }
 
     AsyncStorage.removeItem("floydChipId").catch(console.error);
     mqttDisconnect();
-  }, [mqttConnect, mqttDisconnect]);
+  }, [mqttDisconnect]);
 
   const publishCommand = useCallback((action: string, parameters?: object): boolean => {
     return publish("command", {
@@ -200,12 +258,27 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
   }, [publishCommand]);
 
   const connect = useCallback(() => {
-    mqttConnect(chipId ?? undefined);
-  }, [chipId, mqttConnect]);
+    if (chipId) {
+      startScan();
+    }
+  }, [chipId, startScan]);
 
   const disconnect = useCallback(() => {
     mqttDisconnect();
   }, [mqttDisconnect]);
+
+  const setFeedLogs = useCallback((logs: FeedLogEntry[]) => {
+    setFeedLogsState(logs);
+    AsyncStorage.setItem("floyd-feedlogs", JSON.stringify(logs)).catch(console.error);
+  }, []);
+
+  const publishScheduleSync = useCallback((schedules: Schedule[]): boolean => {
+    return publish("command", {
+      action: "set_schedules",
+      parameters: { schedules },
+      timestamp: Date.now(),
+    });
+  }, [publish]);
 
   const esp32Status: "connected" | "disconnected" | "unknown" =
     deviceData.esp32Connected === true
@@ -236,7 +309,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     autoRefreshInterval,
     setAutoRefreshInterval,
     esp32Status,
-    mqttBrokerUrl: brokerUrl,
+    feedLogs,
+    setFeedLogs,
+    publishScheduleSync,
   }), [
     isConnected,
     isConnecting,
@@ -257,7 +332,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
     isAutoRefreshEnabled,
     autoRefreshInterval,
     esp32Status,
-    brokerUrl,
+    feedLogs,
+    setFeedLogs,
+    publishScheduleSync,
   ]);
 
   return (

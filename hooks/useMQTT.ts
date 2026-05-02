@@ -11,11 +11,8 @@ const globalScope = globalThis as GlobalWithProcess;
 globalScope.process = globalScope.process ?? {};
 globalScope.process.nextTick = globalScope.process.nextTick ?? ((callback) => setTimeout(callback, 0));
 
-const DEFAULT_BROKER_URL = "mqtts://broker.hivemq.com:8883";
-const BROKER_URL = process.env.EXPO_PUBLIC_MQTT_BROKER_URL || DEFAULT_BROKER_URL;
-
 export interface MQTTMessage {
-  type: "sensor_data" | "control_response" | "error" | "status";
+  type: "sensor_data" | "control_response" | "error" | "status" | "schedules_list";
   data: Record<string, unknown>;
   timestamp: number;
 }
@@ -61,8 +58,17 @@ const useMQTT = (deviceChipId: string | null, options: UseMQTTOptions = {}) => {
     }));
   }, []);
 
-  const connect = useCallback((nextChipId?: string) => {
+  const connect = useCallback((brokerUrl: string, nextChipId?: string) => {
     const chipId = nextChipId ?? chipIdRef.current;
+
+    if (!brokerUrl) {
+      setState((prev) => ({
+        ...prev,
+        error: "No feeder discovered yet",
+        isConnecting: false,
+      }));
+      return;
+    }
 
     if (!chipId) {
       setState((prev) => ({
@@ -81,16 +87,13 @@ const useMQTT = (deviceChipId: string | null, options: UseMQTTOptions = {}) => {
     chipIdRef.current = chipId;
     setState((prev) => ({ ...prev, isConnecting: true, error: null }));
 
-    const client = mqtt.connect(BROKER_URL, {
+    const client = mqtt.connect(brokerUrl, {
       clientId: `floyd-app-${Date.now().toString(36)}`,
       clean: true,
       keepalive: 30,
+      connectTimeout: 10000,
       reconnectPeriod: 3000,
-      connectTimeout: 20000,
-      reschedulePings: true,
-      resubscribe: true,
       timerVariant: "native",
-      rejectUnauthorized: false,
     });
 
     client.on("connect", () => {
@@ -168,7 +171,6 @@ const useMQTT = (deviceChipId: string | null, options: UseMQTTOptions = {}) => {
 
   return {
     ...state,
-    brokerUrl: BROKER_URL,
     connect,
     disconnect,
     publish,
