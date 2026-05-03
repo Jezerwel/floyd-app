@@ -1,6 +1,6 @@
 # Floyd Feeder — Codebase Documentation
 
-Cloud-connected IoT fish feeder: React Native mobile app + Express cloud server + ESP32 MQTT firmware.
+Local WiFi fish feeder: React Native mobile app + ESP32 firmware with embedded MQTT broker.
 
 ---
 
@@ -10,28 +10,30 @@ Cloud-connected IoT fish feeder: React Native mobile app + Express cloud server 
 graph TB
     subgraph App["React Native App (Expo)"]
         UI["Screens: Dashboard, Controls, Schedule, Logs"]
-        CTX["useESP32Context (MQTT state)"]
-        API["services/api.ts (REST client)"]
+        CTX["useESP32Context (MQTT + mDNS)"]
+        MDNS["useMDNS (discovery)"]
+        AS["AsyncStorage (feed logs)"]
     end
-    subgraph Cloud["Cloud Infrastructure"]
-        HIVEMQ["HiveMQ MQTT Broker"]
-        SRV["Express Server (Railway)"]
-        DB[("SQLite (Prisma)")]
-    end
-    subgraph HW["ESP32 Feeder"]
-        FW["ESP32_MQTT_Server.ino"]
+    subgraph HW["ESP32 Feeder (Local WiFi)"]
+        BROKER["Embedded MQTT Broker (sMQTTBroker)"]
+        MDNS2["ESPmDNS (advertising)"]
+        NTP["ezTime (NTP time sync)"]
+        SCHED["Schedule Store (NVS)"]
+        FW["Motor Control + Sensors"]
         L298N["L298N → Auger + Impeller"]
-        SENSORS["HC-SR04 + DS18B20 (not currently connected)"]
     end
     UI --> CTX
-    CTX -- mqtts://8883 --> HIVEMQ
-    API -- REST --> SRV
-    SRV -- mqtt://1883 --> HIVEMQ
-    SRV --> DB
-    HIVEMQ -- mqtts://8883 --> FW
+    CTX --> MDNS
+    MDNS -- mDNS discovery --> MDNS2
+    CTX -- mqtt://{ip}:1883 --> BROKER
+    CTX --> AS
+    BROKER --> FW
     FW --> L298N
-    FW --> SENSORS
+    BROKER --> SCHED
+    BROKER --> NTP
 ```
+
+**No cloud dependencies.** The ESP32 runs an embedded MQTT broker on port 1883 and advertises itself via mDNS as `floyd-feeder-{chipId}.local`. The app discovers it on the same WiFi network and connects directly.
 
 ---
 
@@ -41,13 +43,12 @@ MQTT topics under `floyd/devices/{chipId}/`:
 
 | Topic | Direction | Payload |
 |-------|-----------|---------|
-| `telemetry` | ESP → App + Server | Sensor data (temp, distance, food%) |
-| `status` | ESP → App + Server | Connection state (retained) |
-| `command` | App + Server → ESP | `start_feed`, `stop_feed`, `clear_jam`, `get_sensors` |
-| `response` | ESP → App + Server | `feed_complete`, `jam_clear_complete`, errors |
-| `config` | App → ESP | Geometry/interval changes |
+| `telemetry` | ESP → App | Sensor data (temp, distance, food%) |
+| `status` | ESP → App | Connection state (retained) |
+| `command` | App → ESP | `start_feed`, `stop_feed`, `clear_jam`, `get_sensors`, `get_schedules`, `set_schedules` |
+| `response` | ESP → App | `feed_complete`, `jam_clear_complete`, `schedules_list`, errors |
 
-The app and server communicate RESTfully for CRUD operations (schedules, devices, history).
+All communication is local WiFi (no internet required after provisioning). Feed history is persisted on-device via AsyncStorage.
 
 ---
 
@@ -58,62 +59,30 @@ floyd-app/
 ├── app/                        # Expo Router pages
 │   ├── _layout.tsx             # Root providers (GestureHandler, MQTT context, Theme)
 │   ├── +not-found.tsx          # 404 screen
-│   ├── provision.tsx           # WebView-based WiFi provisioning
+│   ├── provision.tsx           # WebView-based WiFi provisioning (no cloud claim)
 │   └── (tabs)/
 │       ├── _layout.tsx         # Bottom tab navigator config
 │       ├── index.tsx           # Dashboard — sensor data, alerts, connection status
 │       ├── controls.tsx        # Manual feed — speed sliders, FEED/STOP/CLEAR JAM
-│       ├── schedule.tsx        # Schedule CRUD — time picker, day toggles
-│       └── history.tsx         # Feed logs, sensor history, alerts
+│       ├── schedule.tsx        # Schedule CRUD via MQTT — time picker, day toggles
+│       └── history.tsx         # Feed logs from AsyncStorage, sensor history, alerts
 ├── components/
-│   ├── ESP32Connection.tsx   # MQTT connection card (connect/disconnect/provision)
-│   ├── ThemedText.tsx          # Theme-aware text component
-│   ├── ThemedView.tsx          # Theme-aware view component
-│   ├── HapticTab.tsx           # Haptic feedback tab button
-│   ├── ExternalLink.tsx        # In-app browser link
-│   └── ui/
-│       ├── IconSymbol.tsx      # SF Symbols → MaterialIcons mapping
-│       ├── StatCard.tsx        # Animated metric card
-│       ├── CircularProgress.tsx# Animated circular gauge (food level)
-│       ├── AnimatedValue.tsx   # Animated number transitions
-│       ├── Skeleton.tsx        # Loading skeletons
-│       ├── AlertItem.tsx       # Alert display row
-│       ├── AnimatedButton.tsx  # Animated pressable button
-│       ├── BatteryLevel.tsx    # Battery indicator
-│       ├── CustomSlider.tsx    # Custom slider control
-│       ├── DistanceSensor.tsx  # Distance reading display
-│       ├── ErrorToast.tsx      # Error toast notification
-│       ├── InlineError.tsx     # Inline error/status badges
-│       ├── PaddleControl.tsx   # Paddle-style widget
-│       ├── VerticalSlider.tsx  # Vertical orientation slider
-│       ├── TabBarBackground.tsx# Tab bar background (cross-platform)
-│       └── TabButton.tsx       # Tab bar button
+│   ├── ESP32Connection.tsx   # LAN connection card (mDNS scan/disconnect/reconfigure)
+│   └── ui/                     # Reusable UI components
 ├── hooks/
-│   ├── useMQTT.ts             # Core MQTT connection (mqtt.js v5)
-│   ├── useESP32Context.tsx   # MQTT context provider + device state
-│   ├── useAlerts.ts           # Derived alerts from sensor data
-│   ├── useColorScheme.ts      # Light/dark scheme hook
-│   ├── useThemeColor.ts       # Theme color resolver
-│   └── useMountEffect.ts      # Mount-only effect
-├── services/
-│   └── api.ts                 # REST client for cloud API
+│   ├── useMQTT.ts              # Core MQTT connection (mqtt.js v5, plaintext mqtt://)
+│   ├── useESP32Context.tsx    # Context provider: mDNS discovery + MQTT + feed logs
+│   ├── useMDNS.ts             # mDNS feeder discovery (react-native-zeroconf)
+│   ├── useScheduleMQTT.ts     # Schedule CRUD over MQTT
+│   ├── useAlerts.ts            # Derived alerts from sensor data
+│   └── useMountEffect.ts       # Mount-only effect
 ├── constants/
 │   └── Colors.ts              # Light + dark marine green palette
-├── server/
-│   ├── prisma/
-│   │   └── schema.prisma      # DB schema: Device, FeedSchedule, FeedLog, AlertConfig
-│   └── src/
-│       ├── server.ts           # Express app + REST endpoints
-│       ├── types/index.ts      # TypeScript interfaces + type guards
-│       └── services/
-│           ├── db.ts           # Prisma singleton
-│           ├── mqttClient.ts   # MQTT handler (publish/subscribe)
-│           └── scheduler.ts    # Cron-based feed execution
-├── ESP32_MQTT_Server.ino    # ESP32 firmware (L298N + HC-SR04 + DS18B20)
+├── ESP32_MQTT_Server.ino    # ESP32 firmware (embedded broker + scheduler + motor)
 └── docs/
-    ├── floyd-feeder-manual-setup.md
-    ├── floyd-feeder-electronics-setup.md
-    └── plans/                  # Architecture plans (excluded from updates)
+    ├── plans/                  # Architecture plans
+    ├── ESP32_Pin_Layout_Optimization.md
+    └── ESP32_Setup_Guide.md
 ```
 
 ---
@@ -122,51 +91,61 @@ floyd-app/
 
 | Feature | Description |
 |---------|-------------|
-| **Device Provisioning** | WiFiManager captive portal via WebView; auto-claim device via API |
+| **Device Provisioning** | WiFiManager captive portal via WebView; local-only, no cloud claim |
 | **Live Dashboard** | Connection status, food level gauge, temperature, motor state, alerts |
 | **Manual Controls** | Auger/impeller speed sliders, feed duration, FEED/STOP/CLEAR JAM |
-| **Feeding Schedules** | Full CRUD with time picker, day-of-week, enable/disable |
-| **History & Logs** | Feed history from server, real-time sensor log, alert log |
-| **Cloud Scheduling** | Server-side cron triggers feed via MQTT |
+| **Feeding Schedules** | Full CRUD over MQTT; ESP32-side cron with NTP time sync |
+| **History & Logs** | Feed logs persisted in AsyncStorage, real-time sensor log, alert log |
 | **Alert System** | Low/critical food, high/low temp, sensor disconnect |
 | **Light/Dark Theme** | Marine green palette, full light and dark mode |
 | **Cross-Platform** | iOS, Android, Web |
+| **mDNS Discovery** | Auto-discovers feeder on same WiFi via `floyd-feeder-{chipId}.local` |
 
 ---
 
-## 5. REST API (Server)
+## 5. Schedule CRUD via MQTT
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Health check + MQTT status |
-| `/api/devices/claim` | POST | Register a new feeder device |
-| `/api/devices` | GET | List claimed devices |
-| `/api/schedules` | GET/POST | List/create feed schedules |
-| `/api/schedules/:id` | PUT/DELETE | Update/delete schedule |
-| `/api/history` | GET | Feed history (with `?limit=N`) |
-| `/api/alerts/config` | GET/PUT | Read/update alert thresholds |
+Schedules are stored on the ESP32 in NVS (Preferences) and synced via MQTT commands:
+
+**Get schedules:**
+```json
+{"action":"get_schedules"}
+```
+Response:
+```json
+{"type":"schedules_list","data":[{"id":"abc123","label":"Morning","time":"08:00","daysOfWeek":"0,1,2,3,4,5,6","augerSpeed":768,"impellerSpeed":1023,"preSpinMs":1500,"feedMs":3000,"postSpinMs":1500,"enabled":true}]}
+```
+
+**Set schedules (full sync):**
+```json
+{"action":"set_schedules","parameters":{"schedules":[...]}}
+```
 
 ---
 
 ## 6. MQTT Protocol
 
-### Commands (App/Server → ESP)
+### Commands (App → ESP)
 
 ```json
-{"action":"start_feed","augerSpeed":768,"impellerSpeed":1023,"preSpinMs":1500,"feedMs":3000,"postSpinMs":1500}
+{"action":"start_feed","parameters":{"augerSpeed":768,"impellerSpeed":1023,"preSpinMs":1500,"feedMs":3000,"postSpinMs":1500}}
 {"action":"stop_feed"}
-{"action":"clear_jam","speed":512,"duration":2000}
+{"action":"clear_jam","parameters":{"speed":768,"duration":2000}}
 {"action":"get_sensors"}
-{"action":"set_sensor_interval","interval":5000}
+{"action":"set_sensor_interval","parameters":{"interval":5000}}
+{"action":"get_schedules"}
+{"action":"set_schedules","parameters":{"schedules":[...]}}
 {"action":"ping"}
+{"action":"restart_provisioning"}
 ```
 
-### Telemetry (ESP → App/Server)
+### Telemetry (ESP → App)
 
 ```json
 {"type":"sensor_data","data":{"temperature":24.5,"distance":18.2,"foodLevelPercentage":73,"motorState":"idle"}}
 {"type":"control_response","data":{"action":"feed_complete","success":true,"motorState":"idle"}}
-{"type":"status","data":{"connected":true,"uptime":3600,"wifiRSSI":-65,"freeHeap":28000}}
+{"type":"status","data":{"connected":true,"uptime":3600,"wifiRssi":-65,"freeHeap":28000}}
+{"type":"schedules_list","data":[...]}
 ```
 
 ---
@@ -174,32 +153,27 @@ floyd-app/
 ## 7. ESP32 Firmware
 
 - **File:** `ESP32_MQTT_Server.ino`
-- **Connectivity:** WiFiManager (SoftAP provisioning) → PubSubClient (MQTT)
+- **Connectivity:** WiFiManager (SoftAP provisioning) → Embedded sMQTTBroker (port 1883)
+- **Discovery:** ESPmDNS advertising as `floyd-feeder-{chipId}.local` (MQTT service on TCP 1883)
+- **Time Sync:** ezTime NTP client (default: Asia/Shanghai, configurable)
 - **Motor Control:** L298N dual H-bridge — auger (Motor A) + impeller (Motor B)
-- **Sensors:** HC-SR04 ultrasonic (food level via container geometry) (not currently connected), DS18B20 (temperature) (not currently connected)
+- **Scheduling:** Cron engine in firmware; schedules persisted in NVS
 - **State Machine:** IDLE → PRE_SPIN → FEEDING → POST_SPIN → IDLE (with JAM_CLEAR and STOPPING states)
-- **Persistence:** EEPROM stores WiFi creds, MQTT config, container geometry
-- **TLS:** BearSSL WiFiClientSecure with `setInsecure()` for HiveMQ Cloud
+- **Persistence:** Preferences (NVS) stores WiFi creds, container geometry, schedules
 
-### Pin Mapping
+### Arduino Libraries Required
 
-| Pin | GPIO | Connection |
-|-----|------|------------|
-| GPIO16 | GPIO16 | L298N IN4 (Impeller Dir 4) |
-| GPIO5 | GPIO5 | HC-SR04 TRIG (not connected) |
-| GPIO4 | GPIO4 | HC-SR04 ECHO (not connected) |
-| GPIO0 | GPIO0 | L298N ENB (Impeller PWM) |
-| GPIO2 | GPIO2 | DS18B20 DQ (not connected) |
-| GPIO14 | GPIO14 | L298N ENA (Auger PWM) |
-| GPIO12 | GPIO12 | L298N IN1 (Auger Dir 1) |
-| GPIO13 | GPIO13 | L298N IN2 (Auger Dir 2) |
-| GPIO15 | GPIO15 | L298N IN3 (Impeller Dir 3) |
+| Library | Purpose |
+|---------|---------|
+| WiFiManager | SoftAP provisioning portal |
+| ArduinoJson | JSON parsing/serialization |
+| sMQTTBroker | Embedded MQTT broker |
+| ESPmDNS | mDNS service advertising |
+| ezTime | NTP time synchronization |
 
 ---
 
 ## 8. Deployment
-
-**Server:** Deploy `server/` to Railway with `DATABASE_URL`, `PORT`, `MQTT_BROKER_URL` env vars. Run `npx prisma migrate deploy` after first deploy.
 
 **App:** Build with EAS:
 ```bash
@@ -207,4 +181,10 @@ npx eas build --platform android --profile production
 npx eas build --platform ios --profile production
 ```
 
-**ESP32:** Flash via Arduino IDE (NodeMCU 1.0, 115200 baud, 4MB flash).
+**ESP32:** Flash via Arduino IDE (NodeMCU-32S, 115200 baud, 4MB flash). No cloud configuration needed — the feeder operates entirely on the local WiFi network.
+
+**Provisioning flow:**
+1. Phone connects to `FloydFeeder-{chipId}` WiFi AP
+2. WebView opens `192.168.4.1` — enter home WiFi credentials
+3. Feeder connects to home WiFi, starts mDNS + MQTT broker
+4. App discovers feeder via mDNS and connects
