@@ -138,7 +138,7 @@ export default function DashboardScreen() {
       };
     } else if (esp32Status === "disconnected") {
       return {
-        status: "Cloud online, feeder offline",
+        status: "Feeder not responding",
         color: colors.warning,
         icon: "exclamationmark.triangle.fill",
       };
@@ -231,20 +231,10 @@ export default function DashboardScreen() {
         {isConnected && (
         <StatCard
           title="Device Status"
-          icon="globe"
+          icon="antenna.radiowaves.left.and.right"
           color={colors.secondary}
         >
           <View style={styles.proxyStatusContainer}>
-            <View style={styles.statusRow}>
-              <IconSymbol
-                name="checkmark.circle.fill"
-                size={16}
-                color={colors.success}
-              />
-              <Text style={[styles.statusText, { color: colors.text }]}>
-                Cloud connection: Online
-              </Text>
-            </View>
             <View style={styles.statusRow}>
               <IconSymbol
                 name={
@@ -276,8 +266,7 @@ export default function DashboardScreen() {
                 ]}
               >
                 <Text style={[styles.helpText, { color: colors.text }]}>
-                  The cloud is connected, but the feeder is not responding.
-                  Check power and WiFi connection.
+                  The feeder was found on the network but is not responding. Check power.
                 </Text>
               </View>
             )}

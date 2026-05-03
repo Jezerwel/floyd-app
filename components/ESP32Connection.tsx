@@ -26,7 +26,6 @@ const ESP32Connection: React.FC = () => {
     resetConnection,
     publishCommand,
     setChipId,
-    mqttBrokerUrl,
   } = useESP32();
 
   const colorScheme = useColorScheme();
@@ -47,14 +46,58 @@ const ESP32Connection: React.FC = () => {
   const handleReconfigure = useCallback(() => {
     publishCommand("restart_provisioning");
     setChipId(null);
-    AsyncStorage.removeItem("floydMqttPassword").catch(console.error);
     router.push("/provision");
   }, [publishCommand, setChipId]);
 
   return (
     <View style={styles.container}>
-      {!isConnected && (
-        <StatCard title="Cloud Connection" icon="globe" color={colors.primary}>
+      {!chipId && (
+        <StatCard
+          title="Feeder Connection"
+          icon="antenna.radiowaves.left.and.right"
+          color={colors.primary}
+        >
+          <View style={styles.formContainer}>
+            <View style={styles.cloudInfoContainer}>
+              <View
+                style={[
+                  styles.cloudIconContainer,
+                  { backgroundColor: colors.primary + "15" },
+                ]}
+              >
+                <IconSymbol
+                  name="antenna.radiowaves.left.and.right"
+                  size={32}
+                  color={colors.primary}
+                />
+              </View>
+              <Text style={[styles.cloudTitle, { color: colors.text }]}>
+                No Feeder Configured
+              </Text>
+              <Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+                Set up a Floyd Feeder on your WiFi network to get started.
+              </Text>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.connectButton, { backgroundColor: colors.success }]}
+              onPress={handleProvision}
+              accessibilityRole="button"
+              accessibilityLabel="Open feeder provisioning"
+            >
+              <IconSymbol name="link" size={18} color="white" />
+              <Text style={styles.connectButtonText}>Set Up Feeder</Text>
+            </TouchableOpacity>
+          </View>
+        </StatCard>
+      )}
+
+      {chipId && !isConnected && (
+        <StatCard
+          title="Searching..."
+          icon="magnifyingglass"
+          color={colors.warning}
+        >
           <View style={styles.formContainer}>
             {error && (
               <View
@@ -86,72 +129,88 @@ const ESP32Connection: React.FC = () => {
                       { color: colors.muted },
                     ]}
                   >
-                    • Check your internet connection{"\n"}• Confirm the feeder is
-                    powered on{"\n"}• Re-run provisioning if this is a new device
+                    • Make sure the feeder is plugged in{"\n"}• Confirm it is on
+                    the same WiFi network{"\n"}• Re-run provisioning if this is a new device
                   </Text>
                 </View>
               </View>
             )}
 
             <View style={styles.cloudInfoContainer}>
-              <View
-                style={[
-                  styles.cloudIconContainer,
-                  { backgroundColor: colors.primary + "15" },
-                ]}
-              >
-                <IconSymbol name="globe" size={32} color={colors.primary} />
-              </View>
-              <Text style={[styles.cloudTitle, { color: colors.text }]}>
-                Floyd Feeder Cloud
-              </Text>
-              <Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
-                {chipId ? "Waiting for the feeder to come online" : "Provision a feeder to connect from anywhere"}
-              </Text>
-              <Text style={[styles.serverUrl, { color: colors.muted }]}>
-                {chipId ? `Device ${chipId}` : "No device claimed"}
-              </Text>
-              <Text style={[styles.serverUrl, { color: colors.muted }]}>
-                {mqttBrokerUrl}
-              </Text>
+              {isConnecting ? (
+                <>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={[styles.cloudTitle, { color: colors.text }]}>
+                    Looking for Floyd Feeder...
+                  </Text>
+                  <Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+                    Make sure it's plugged in and on the same network
+                  </Text>
+                </>
+              ) : (
+                <>
+                  <View
+                    style={[
+                      styles.cloudIconContainer,
+                      { backgroundColor: colors.warning + "15" },
+                    ]}
+                  >
+                    <IconSymbol
+                      name="wifi.slash"
+                      size={32}
+                      color={colors.warning}
+                    />
+                  </View>
+                  <Text style={[styles.cloudTitle, { color: colors.text }]}>
+                    Feeder Not Found
+                  </Text>
+                  <Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+                    Device {chipId}
+                  </Text>
+                  <Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+                    Could not discover the feeder on your WiFi network.
+                  </Text>
+                </>
+              )}
             </View>
 
             <TouchableOpacity
               style={[
                 styles.connectButton,
                 {
-                  backgroundColor: isConnecting || !chipId ? colors.muted : colors.primary,
+                  backgroundColor: colors.primary,
                 },
               ]}
               onPress={handleConnect}
-              disabled={isConnecting || !chipId}
+              disabled={isConnecting}
               accessibilityRole="button"
-              accessibilityLabel="Reconnect to cloud"
+              accessibilityLabel="Scan for feeder"
             >
               {isConnecting ? (
                 <>
                   <ActivityIndicator size="small" color="white" />
-                  <Text style={styles.connectButtonText}>Connecting...</Text>
+                  <Text style={styles.connectButtonText}>Scanning...</Text>
                 </>
               ) : (
                 <>
-                  <IconSymbol name="link" size={18} color="white" />
-                  <Text style={styles.connectButtonText}>Reconnect</Text>
+                  <IconSymbol name="arrow.clockwise" size={18} color="white" />
+                  <Text style={styles.connectButtonText}>Scan Again</Text>
                 </>
               )}
             </TouchableOpacity>
 
-            {!chipId && (
-              <TouchableOpacity
-                style={[styles.connectButton, { backgroundColor: colors.success }]}
-                onPress={handleProvision}
-                accessibilityRole="button"
-                accessibilityLabel="Open feeder provisioning"
-              >
-                <IconSymbol name="link" size={18} color="white" />
-                <Text style={styles.connectButtonText}>Set Up Feeder</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity
+              style={[
+                styles.connectButton,
+                { backgroundColor: colors.warning },
+              ]}
+              onPress={handleReconfigure}
+              accessibilityRole="button"
+              accessibilityLabel="Reconfigure feeder"
+            >
+              <IconSymbol name="gear" size={18} color="white" />
+              <Text style={styles.connectButtonText}>Reconfigure</Text>
+            </TouchableOpacity>
           </View>
         </StatCard>
       )}
@@ -171,11 +230,11 @@ const ESP32Connection: React.FC = () => {
                 ]}
               />
               <Text style={[styles.statusText, { color: colors.text }]}>
-              Online{chipId ? ` · ${chipId}` : ""}
+                Online{chipId ? ` · ${chipId}` : ""}
               </Text>
             </View>
             <Text style={[styles.serverUrl, { color: colors.muted }]}>
-              {mqttBrokerUrl}
+              Connected via local WiFi
             </Text>
 
             <View style={styles.actionsContainer}>
@@ -183,7 +242,7 @@ const ESP32Connection: React.FC = () => {
                 style={[styles.actionButton, { backgroundColor: colors.error }]}
                 onPress={handleDisconnect}
                 accessibilityRole="button"
-                accessibilityLabel="Disconnect from cloud"
+                accessibilityLabel="Disconnect"
               >
                 <IconSymbol name="xmark" size={16} color="white" />
                 <Text style={styles.actionButtonText}>Disconnect</Text>
@@ -196,7 +255,7 @@ const ESP32Connection: React.FC = () => {
                 ]}
                 onPress={resetConnection}
                 accessibilityRole="button"
-                accessibilityLabel="Reconnect to cloud"
+                accessibilityLabel="Reconnect"
               >
                 <IconSymbol name="arrow.clockwise" size={16} color="white" />
                 <Text style={styles.actionButtonText}>Reconnect</Text>
@@ -210,7 +269,9 @@ const ESP32Connection: React.FC = () => {
               accessibilityLabel="Reconfigure feeder WiFi"
             >
               <IconSymbol name="gear" size={14} color={colors.muted} />
-              <Text style={[styles.reconfigureText, { color: colors.muted }]}>Reconfigure Device</Text>
+              <Text style={[styles.reconfigureText, { color: colors.muted }]}>
+                Reconfigure Device
+              </Text>
             </TouchableOpacity>
           </View>
         </StatCard>

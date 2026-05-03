@@ -1,10 +1,11 @@
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
+import { useScheduleMQTT, type Schedule } from "@/hooks/useScheduleMQTT";
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -46,80 +47,20 @@ function formatTimeDisplay(time: string): string {
   return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-const CLOUD_SERVER = "https://floyd-feeder.up.railway.app";
-
-interface Schedule {
-  _id: string;
-  label: string;
-  time: string;
-  days: boolean[];
-  enabled: boolean;
-}
-
 const DAY_LABELS = ["S", "M", "T", "W", "Th", "F", "S"];
-
-async function safeJson<T>(res: Response): Promise<T> {
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
-  }
-  try {
-    return await res.json();
-  } catch {
-    throw new Error("Invalid JSON response from server");
-  }
-}
-
-async function fetchSchedules(): Promise<Schedule[]> {
-  const res = await fetch(`${CLOUD_SERVER}/api/schedules`);
-  const data = await safeJson<Schedule[]>(res);
-  return Array.isArray(data) ? data : [];
-}
-
-async function createSchedule(data: {
-  label: string;
-  time: string;
-  days: boolean[];
-  enabled: boolean;
-}): Promise<Schedule> {
-  const res = await fetch(`${CLOUD_SERVER}/api/schedules`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  return safeJson<Schedule>(res);
-}
-
-async function updateSchedule(
-  id: string,
-  data: {
-    label: string;
-    time: string;
-    days: boolean[];
-    enabled: boolean;
-  },
-): Promise<Schedule> {
-  const res = await fetch(`${CLOUD_SERVER}/api/schedules/${id}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  return safeJson<Schedule>(res);
-}
-
-async function deleteSchedule(id: string): Promise<void> {
-  await fetch(`${CLOUD_SERVER}/api/schedules/${id}`, {
-    method: "DELETE",
-  });
-}
 
 export default function ScheduleScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? "light"];
 
-  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const {
+    schedules: mqttSchedules,
+    loading: _loading,
+    fetchSchedules,
+    pushSchedules,
+  } = useScheduleMQTT();
+
   const [refreshing, setRefreshing] = useState(false);
-  const [_loading] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formLabel, setFormLabel] = useState("");
@@ -138,24 +79,11 @@ export default function ScheduleScreen() {
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [pickerDate, setPickerDate] = useState(new Date());
 
-  const loadSchedules = useCallback(async () => {
-    try {
-      const data = await fetchSchedules();
-      setSchedules(data);
-    } catch {
-      Alert.alert("Error", "Failed to load schedules. Check your connection.");
-    }
-  }, []);
-
-  useEffect(() => {
-    loadSchedules();
-  }, [loadSchedules]);
-
-  const onRefresh = useCallback(async () => {
+  const onRefresh = useCallback(() => {
     setRefreshing(true);
-    await loadSchedules();
+    fetchSchedules();
     setRefreshing(false);
-  }, [loadSchedules]);
+  }, [fetchSchedules]);
 
   const resetForm = useCallback(() => {
     setEditingId(null);
@@ -174,12 +102,23 @@ export default function ScheduleScreen() {
     setShowModal(true);
   }, [resetForm]);
 
+  // Convert daysOfWeek string "0,1,2,3,4,5,6" → boolean[7]
+  const daysOfWeekToBool = (dow: string): boolean[] => {
+    const out = [false, false, false, false, false, false, false];
+    if (!dow) return out;
+    dow.split(",").forEach((d) => {
+      const idx = parseInt(d.trim(), 10);
+      if (idx >= 0 && idx <= 6) out[idx] = true;
+    });
+    return out;
+  };
+
   const openEditModal = useCallback((schedule: Schedule) => {
-    setEditingId(schedule._id);
+    setEditingId(schedule.id);
     setFormLabel(schedule.label);
     setFormTime(schedule.time);
     setPickerDate(timeStringToDate(schedule.time));
-    setFormDays([...(schedule.days ?? [false, false, false, false, false, false, false])]);
+    setFormDays(daysOfWeekToBool(schedule.daysOfWeek));
     setFormEnabled(schedule.enabled);
     setShowTimePicker(false);
     setShowModal(true);
@@ -193,7 +132,15 @@ export default function ScheduleScreen() {
     });
   }, []);
 
-  const handleSave = useCallback(async () => {
+  // Convert boolean[7] → daysOfWeek string "0,1,2,..."
+  const boolToDaysOfWeek = (days: boolean[]): string => {
+    return days
+      .map((d, i) => (d ? String(i) : null))
+      .filter(Boolean)
+      .join(",");
+  };
+
+  const handleSave = useCallback(() => {
     if (!formLabel.trim()) {
       Alert.alert("Validation", "Please enter a label.");
       return;
@@ -209,26 +156,29 @@ export default function ScheduleScreen() {
 
     setSaving(true);
     try {
-      const payload = {
+      const updatedSchedules = [...mqttSchedules];
+      const newSchedule: Schedule = {
+        id: editingId || Date.now().toString(16),
         label: formLabel.trim(),
         time: formTime,
-        days: formDays,
+        daysOfWeek: boolToDaysOfWeek(formDays),
+        augerSpeed: 768,
+        impellerSpeed: 1023,
+        preSpinMs: 1500,
+        feedMs: 3000,
+        postSpinMs: 1500,
         enabled: formEnabled,
       };
 
       if (editingId) {
-        const updated = await updateSchedule(editingId, payload);
-        if (updated && updated._id) {
-          setSchedules((prev) =>
-            prev.map((s) => (s._id === editingId ? updated : s)),
-          );
-        }
+        const idx = updatedSchedules.findIndex((s) => s.id === editingId);
+        if (idx >= 0) updatedSchedules[idx] = newSchedule;
+        else updatedSchedules.push(newSchedule);
       } else {
-        const created = await createSchedule(payload);
-        if (created && created._id) {
-          setSchedules((prev) => [...prev, created]);
-        }
+        updatedSchedules.push(newSchedule);
       }
+
+      pushSchedules(updatedSchedules);
       setShowModal(false);
       resetForm();
     } catch {
@@ -236,30 +186,14 @@ export default function ScheduleScreen() {
     } finally {
       setSaving(false);
     }
-  }, [formLabel, formTime, formDays, formEnabled, editingId, resetForm]);
+  }, [formLabel, formTime, formDays, formEnabled, editingId, resetForm, mqttSchedules, pushSchedules]);
 
-  const handleToggleEnabled = useCallback(async (schedule: Schedule) => {
-    const newEnabled = !schedule.enabled;
-    setSchedules((prev) =>
-      prev.map((s) =>
-        s && s._id === schedule._id ? { ...s, enabled: newEnabled } : s,
-      ),
+  const handleToggleEnabled = useCallback((schedule: Schedule) => {
+    const updatedSchedules = mqttSchedules.map((s) =>
+      s.id === schedule.id ? { ...s, enabled: !s.enabled } : s,
     );
-    try {
-      await updateSchedule(schedule._id, {
-        label: schedule.label,
-        time: schedule.time,
-        days: schedule.days,
-        enabled: newEnabled,
-      });
-    } catch {
-      setSchedules((prev) =>
-        prev.map((s) =>
-          s && s._id === schedule._id ? { ...s, enabled: schedule.enabled } : s,
-        ),
-      );
-    }
-  }, []);
+    pushSchedules(updatedSchedules);
+  }, [mqttSchedules, pushSchedules]);
 
   const handleDelete = useCallback((schedule: Schedule) => {
     Alert.alert(
@@ -270,23 +204,21 @@ export default function ScheduleScreen() {
         {
           text: "Delete",
           style: "destructive",
-          onPress: async () => {
-            try {
-              await deleteSchedule(schedule._id);
-              setSchedules((prev) =>
-                prev.filter((s) => s._id !== schedule._id),
-              );
-            } catch {
-              Alert.alert("Error", "Failed to delete schedule.");
-            }
+          onPress: () => {
+            const updatedSchedules = mqttSchedules.filter(
+              (s) => s.id !== schedule.id,
+            );
+            pushSchedules(updatedSchedules);
           },
         },
       ],
     );
-  }, []);
+  }, [mqttSchedules, pushSchedules]);
 
   const renderScheduleItem = useCallback(
-    ({ item }: { item: Schedule }) => (
+    ({ item }: { item: Schedule }) => {
+      const itemDays = daysOfWeekToBool(item.daysOfWeek);
+      return (
       <Pressable
         onPress={() => openEditModal(item)}
         onLongPress={() => handleDelete(item)}
@@ -322,17 +254,17 @@ export default function ScheduleScreen() {
               style={[
                 styles.dayTag,
                 {
-                  backgroundColor: item.days[i]
+                  backgroundColor: itemDays[i]
                     ? colors.primary
                     : colors.border + "30",
-                  borderColor: item.days[i] ? colors.primary : colors.border,
+                  borderColor: itemDays[i] ? colors.primary : colors.border,
                 },
               ]}
             >
               <Text
                 style={[
                   styles.dayTagText,
-                  { color: item.days[i] ? "#FFFFFF" : colors.muted },
+                  { color: itemDays[i] ? "#FFFFFF" : colors.muted },
                 ]}
               >
                 {day}
@@ -341,8 +273,9 @@ export default function ScheduleScreen() {
           ))}
         </View>
       </Pressable>
-    ),
-    [colors, handleDelete, handleToggleEnabled, openEditModal],
+      );
+    },
+    [colors, handleDelete, handleToggleEnabled, openEditModal, daysOfWeekToBool],
   );
 
   return (
@@ -358,8 +291,8 @@ export default function ScheduleScreen() {
 
       {!_loading && (
         <FlatList
-          data={schedules.filter((s): s is Schedule => !!s && !!s._id)}
-          keyExtractor={(item) => item._id}
+          data={mqttSchedules.filter((s): s is Schedule => !!s && !!s.id)}
+          keyExtractor={(item) => item.id}
           renderItem={renderScheduleItem}
           contentContainerStyle={styles.listContent}
           refreshControl={

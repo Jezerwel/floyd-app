@@ -5,7 +5,7 @@ import useAlerts from "@/hooks/useAlerts";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useESP32 } from "@/hooks/useESP32Context";
 import { StatusBar } from "expo-status-bar";
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -35,50 +35,19 @@ interface FeedLogEntry {
   errorMessage?: string;
 }
 
-const CLOUD_SERVER = "https://floyd-feeder.up.railway.app";
-
-interface SensorLogEntry {
-  id: string;
-  timestamp: Date;
-  temperature?: number;
-  distance?: number;
-  foodLevel?: number;
-  temperatureSensorConnected: boolean;
-  ultrasonicSensorConnected: boolean;
-}
-
 export default function LogsScreen() {
   const colorScheme = useColorScheme();
   const colors = Colors[colorScheme ?? "light"];
-  const { deviceData, isConnected } = useESP32();
+  const { deviceData, isConnected, feedLogs } = useESP32();
   const { alerts } = useAlerts();
 
   const [sensorLogs, setSensorLogs] = useState<SensorLogEntry[]>([]);
   const [showTemperatureLogs, setShowTemperatureLogs] = useState(true);
   const [showAlertLogs, setShowAlertLogs] = useState(true);
   const [showFeedHistory, setShowFeedHistory] = useState(false);
-  const [feedLogs, setFeedLogs] = useState<FeedLogEntry[]>([]);
-
-  // Fetch feed history from server
-  const fetchFeedHistory = useCallback(async () => {
-    try {
-      const res = await fetch(`${CLOUD_SERVER}/api/history?limit=50`);
-      if (!res.ok) throw new Error(`API ${res.status}`);
-      const data = await res.json();
-      if (data.success && data.logs) {
-        setFeedLogs(data.logs);
-      }
-    } catch (err) {
-      console.error("Failed to fetch feed history:", err);
-    }
-  }, []);
 
   const handleFeedHistoryToggle = () => {
-    const next = !showFeedHistory;
-    setShowFeedHistory(next);
-    if (next && feedLogs.length === 0) {
-      fetchFeedHistory();
-    }
+    setShowFeedHistory(!showFeedHistory);
   };
 
   // Log sensor data when it updates (optimized to prevent excessive re-renders)

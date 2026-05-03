@@ -10,17 +10,15 @@ import {
 } from "react-native";
 import { WebView, WebViewMessageEvent } from "react-native-webview";
 import { useESP32 } from "@/hooks/useESP32Context";
-import { claimDevice } from "@/services/api";
 
 const ESP_AP_URL = "http://192.168.4.1";
 
-type ProvisioningStep = "provisioning" | "claiming" | "done" | "error";
-type ErrorKind = "webview" | "claim" | "no_device";
+type ProvisioningStep = "provisioning" | "done" | "error";
+type ErrorKind = "webview" | "no_device";
 
 interface ProvisioningMessage {
   type: "device-info-found" | "provisioning-complete" | "error";
   chipId?: string;
-  mqttPassword?: string;
   deviceName?: string;
   message?: string;
 }
@@ -39,31 +37,26 @@ const injectedJavaScript = `
     function scan() {
       var body = document.body ? (document.body.innerText || '') : '';
       var chipId = readInput('deviceId') || (body.match(/Device ID\\s*[:\\-]?\\s*([A-Fa-f0-9]{6,8})/i) || [])[1] || '';
-      var mqttPassword = readInput('mqttPassword') || (body.match(/MQTT Password\\s*[:\\-]?\\s*([A-Fa-f0-9]{8,32})/i) || [])[1] || '';
       var deviceName = readInput('deviceName') || 'Floyd Feeder';
 
       if (chipId) localStorage.setItem('floydChipId', chipId);
-      if (mqttPassword) localStorage.setItem('floydMqttPassword', mqttPassword);
       if (deviceName) localStorage.setItem('floydDeviceName', deviceName);
 
       var storedChipId = localStorage.getItem('floydChipId') || chipId;
-      var storedPassword = localStorage.getItem('floydMqttPassword') || mqttPassword;
       var storedName = localStorage.getItem('floydDeviceName') || deviceName;
 
-      if (storedChipId && storedPassword) {
+      if (storedChipId) {
         post({
           type: 'device-info-found',
           chipId: storedChipId,
-          mqttPassword: storedPassword,
           deviceName: storedName
         });
       }
 
-      if (/success|saved|connected|restart|reboot/i.test(body) && storedChipId && storedPassword) {
+      if (/success|saved|connected|restart|reboot/i.test(body) && storedChipId) {
         post({
           type: 'provisioning-complete',
           chipId: storedChipId,
-          mqttPassword: storedPassword,
           deviceName: storedName
         });
       }
@@ -80,36 +73,7 @@ export default function ProvisionScreen() {
   const [errorKind, setErrorKind] = useState<ErrorKind>("webview");
   const [errorMsg, setErrorMsg] = useState("");
   const [deviceId, setDeviceId] = useState("");
-  const [mqttPassword, setMqttPassword] = useState("");
   const { isConnected, chipId, setChipId, publishCommand } = useESP32();
-
-  const finishClaim = useCallback(async (data: ProvisioningMessage) => {
-    const cId = data.chipId || deviceId;
-    const password = data.mqttPassword || mqttPassword;
-
-    if (!cId || !password) {
-      setStep("error");
-      setErrorKind("claim");
-      setErrorMsg("Provisioning completed, but the device ID or MQTT password was missing.");
-      return;
-    }
-
-    setStep("claiming");
-    const result = await claimDevice(cId, data.deviceName || "Floyd Feeder", password);
-
-    if (!result.success) {
-      setStep("error");
-      setErrorKind("claim");
-      setErrorMsg(result.error || "Failed to claim device on the server.");
-      return;
-    }
-
-    await AsyncStorage.setItem("floydMqttPassword", password);
-    setDeviceId(cId);
-    setMqttPassword(password);
-    setChipId(cId);
-    setStep("done");
-  }, [deviceId, mqttPassword, setChipId]);
 
   const handleMessage = useCallback((event: WebViewMessageEvent) => {
     try {
@@ -117,16 +81,21 @@ export default function ProvisionScreen() {
 
       if (data.type === "device-info-found") {
         if (data.chipId) setDeviceId(data.chipId);
-        if (data.mqttPassword) setMqttPassword(data.mqttPassword);
         return;
       }
 
       if (data.type === "provisioning-complete") {
-        finishClaim(data).catch((error) => {
+        const cId = data.chipId || deviceId;
+        if (cId) {
+          AsyncStorage.setItem("floydChipId", cId).catch(console.error);
+          setChipId(cId);
+          setDeviceId(cId);
+          setStep("done");
+        } else {
           setStep("error");
-          setErrorKind("claim");
-          setErrorMsg(error instanceof Error ? error.message : "Failed to claim device.");
-        });
+          setErrorKind("webview");
+          setErrorMsg("Provisioning completed, but could not read the device ID.");
+        }
         return;
       }
 
@@ -140,7 +109,7 @@ export default function ProvisionScreen() {
       setErrorKind("webview");
       setErrorMsg("Failed to process provisioning data from the feeder.");
     }
-  }, [finishClaim]);
+  }, [deviceId, setChipId]);
 
   const handleWebViewError = useCallback(() => {
     setStep("error");
@@ -152,7 +121,6 @@ export default function ProvisionScreen() {
     publishCommand("restart_provisioning");
     setChipId(null);
     AsyncStorage.removeItem("floydChipId").catch(console.error);
-    AsyncStorage.removeItem("floydMqttPassword").catch(console.error);
     setStep("provisioning");
     setErrorMsg("Restarting feeder in provisioning mode... Connect your phone to the FloydFeeder WiFi when it appears (may take ~10 seconds).");
   }, [publishCommand, setChipId]);
@@ -184,18 +152,11 @@ export default function ProvisionScreen() {
         </>
       )}
 
-      {step === "claiming" && (
-        <View style={styles.centered}>
-          <ActivityIndicator size="large" color="#2e7d32" />
-          <Text style={styles.title}>Claiming device...</Text>
-          <Text style={styles.body}>Saving this feeder to the cloud server.</Text>
-        </View>
-      )}
-
       {step === "done" && (
         <View style={styles.centered}>
           <Text style={styles.title}>Device Connected</Text>
           <Text style={styles.body}>Device ID: {deviceId}</Text>
+          <Text style={styles.body}>The feeder is now on your WiFi network. The app will discover it automatically.</Text>
           <TouchableOpacity style={styles.primaryButton} onPress={handleGoToDashboard}>
             <Text style={styles.primaryButtonText}>Go to Dashboard</Text>
           </TouchableOpacity>
@@ -232,12 +193,6 @@ export default function ProvisionScreen() {
           )}
 
           {errorKind === "webview" && !isConnected && !chipId && (
-            <TouchableOpacity style={styles.primaryButton} onPress={() => setStep("provisioning")}>
-              <Text style={styles.primaryButtonText}>Try Again</Text>
-            </TouchableOpacity>
-          )}
-
-          {errorKind === "claim" && (
             <TouchableOpacity style={styles.primaryButton} onPress={() => setStep("provisioning")}>
               <Text style={styles.primaryButtonText}>Try Again</Text>
             </TouchableOpacity>

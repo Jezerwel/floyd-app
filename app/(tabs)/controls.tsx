@@ -104,13 +104,13 @@ export default function ControlsScreen() {
 
   const handleFeed = () => {
     if (!isConnected) {
-      Alert.alert("Offline", "Not connected to cloud server.");
+      Alert.alert("Offline", "Not connected to feeder.");
       return;
     }
     if (esp32Status !== "connected") {
       Alert.alert(
         "Feeder Not Available",
-        "Connected to cloud, but the feeder is offline."
+        "Feeder is offline — check power & WiFi."
       );
       return;
     }
@@ -129,7 +129,7 @@ export default function ControlsScreen() {
 
   const handleClearJam = () => {
     if (!isConnected) {
-      Alert.alert("Offline", "Not connected to cloud server.");
+      Alert.alert("Offline", "Not connected to feeder.");
       return;
     }
     Alert.alert(
