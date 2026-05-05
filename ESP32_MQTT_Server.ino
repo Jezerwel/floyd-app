@@ -212,7 +212,7 @@ void syncNTP() {
 }
 
 void checkSchedules() {
-  if (UTC.timeStatus() == timeNotSet) return;  // no NTP time yet
+  if (timeStatus() == timeNotSet) return;  // no NTP time yet
 
   String nowTime = UTC.dateTime("H:i");    // "HH:MM"
   int nowDow = UTC.dateTime("w").toInt();  // 0=Sun, 1=Mon, ...
