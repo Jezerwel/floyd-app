@@ -67,7 +67,6 @@ volatile bool pendingCommand = false;
 
 // ——— Embedded MQTT Broker ———————————————
 sMQTTBroker broker;
-WiFiServer  wifiServer(1883);  // MQTT broker on port 1883
 
 // ——— Pin Definitions ————————————————————
 // L298N Motor Driver
@@ -172,9 +171,6 @@ void saveConfig() {
   Serial.println("Saved config to NVS");
 }
 
-  Serial.println("Saved config to NVS");
-}
-
 void loadSchedules() {
   prefs.begin(PREFS_NAMESPACE, false);
   size_t len = prefs.getBytesLength(PREFS_KEY_SCHEDULES);
@@ -216,7 +212,7 @@ void syncNTP() {
 }
 
 void checkSchedules() {
-  if (!UTC.isSet()) return;  // no NTP time yet
+  if (UTC.timeStatus() == timeNotSet) return;  // no NTP time yet
 
   String nowTime = UTC.dateTime("H:i");    // "HH:MM"
   int nowDow = UTC.dateTime("w").toInt();  // 0=Sun, 1=Mon, ...
@@ -941,8 +937,7 @@ void setup() {
   }
 
   // Start embedded MQTT broker on port 1883
-  wifiServer.begin(1883);
-  broker.init();
+  broker.init(1883);
   Serial.println("MQTT broker started on port 1883");
 
   Serial.println("Setup complete. Ready for local MQTT.");
@@ -958,8 +953,7 @@ void setup() {
 void loop() {
   yield();
 
-  // Keep mDNS alive (required for ESPmDNS)
-  MDNS.update();
+  // mDNS handles itself internally on ESP32 (no update() needed)
 
   static unsigned long lastNtpUpdate = 0;
   if (millis() - lastNtpUpdate > 60000) {  // resync every 60s
@@ -971,11 +965,6 @@ void loop() {
 
   checkWiFiConnection();
 
-  // Accept new MQTT client connections to the embedded broker
-  WiFiClient brokerClient = wifiServer.available();
-  if (brokerClient) {
-    broker.accept(brokerClient);
-  }
   broker.update();
 
   if (pendingCommand) {
