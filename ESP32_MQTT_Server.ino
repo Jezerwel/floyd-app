@@ -1,7 +1,6 @@
 // Floyd Feeder v2.1 — L298N Motor Driver Firmware (Optimized)
 // ESP32 MQTT client controlling auger + impeller via L298N
 #include <WiFi.h>
-#include <WiFiManager.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
 #include <ESPmDNS.h>
@@ -279,47 +278,6 @@ void setupMQTTTopics() {
 }
 
 // ============================================================
-//  WiFi Provisioning (WiFiManager)
-// ============================================================
-
-void startProvisioningMode() {
-  WiFiManager wm;
-
-  WiFiManagerParameter customDeviceId("deviceId", "Device ID", deviceChipId.c_str(), 20);
-  WiFiManagerParameter customDeviceName("deviceName", "Device Name", "Floyd Feeder", 32);
-
-  wm.setCustomHeadElement(
-    "<style>body{font-family:system-ui,sans-serif;}button{background:#2e7d32!important;}</style>"
-    "<p><strong>Floyd Fish Feeder Setup</strong></p>"
-    "<p>Enter your home WiFi credentials below. The feeder will connect to your network.</p>"
-  );
-  wm.addParameter(&customDeviceId);
-  wm.addParameter(&customDeviceName);
-  wm.setConfigPortalTimeout(180);
-  wm.setConnectTimeout(30);
-
-  String apName = "FloydFeeder-" + deviceChipId;
-  Serial.println("Starting provisioning AP: " + apName);
-
-  if (!wm.autoConnect(apName.c_str())) {
-    Serial.println("Provisioning timed out, restarting...");
-    delay(3000);
-    ESP.restart();
-  }
-
-  strncpy(cfg.wifiSSID,     WiFi.SSID().c_str(), 32);
-  cfg.wifiSSID[32]     = '\0';
-  strncpy(cfg.wifiPassword, WiFi.psk().c_str(),  64);
-  cfg.wifiPassword[64] = '\0';
-  cfg.provisioned = true;
-
-  saveConfig();
-  Serial.println("Provisioning complete. Restarting...");
-  delay(1000);
-  ESP.restart();
-}
-
-// ============================================================
 //  WiFi Connection (+ Event Handler)
 // ============================================================
 
@@ -363,6 +321,13 @@ void connectToWiFi() {
 }
 
 void checkWiFiConnection() {
+  // Hotspot-only / no STA credentials: nothing to monitor.
+  if (cfg.wifiSSID[0] == '\0') return;
+
+  // Running as SoftAP-only (STA failed or unused): do not watchdog-reboot.
+  wifi_mode_t mode = WiFi.getMode();
+  if (mode != WIFI_STA && mode != WIFI_AP_STA) return;
+
   // DO NOT call WiFi.disconnect() + WiFi.begin() during reconnect.
   // The ESP32 auto-reconnect runs on its own and will reject a
   // manual begin() while "sta is connecting". Just monitor + reboot.
@@ -888,7 +853,7 @@ void handleMQTTMessage(const String& message) {
     broker.publish(topicResponse.c_str(), output.c_str());
     delay(200);
 
-    // Clear NVS so next boot enters AP provisioning mode
+    // Clear NVS; next boot has no STA credentials (hotspot-only, no WiFiManager portal)
     prefs.begin(PREFS_NAMESPACE, false);
     prefs.clear();
     prefs.end();
@@ -920,33 +885,43 @@ void setup() {
   loadSchedules();
   totalVolumeCm3 = computeTotalVolume();
 
-  if (!cfg.provisioned || cfg.wifiSSID[0] == '\0') {
-    Serial.println("No saved WiFi credentials. Starting provisioning mode...");
-    startProvisioningMode();
+  const bool hasStaCredentials = cfg.provisioned && cfg.wifiSSID[0] != '\0';
+
+  if (hasStaCredentials) {
+    connectToWiFi();
+  } else {
+    Serial.println("No home WiFi credentials — hotspot-only (no captive portal).");
+    Serial.println("Connect your phone to FloydFeeder-" + deviceChipId + " then use app Direct AP.");
   }
 
-  connectToWiFi();
-
-  // Advertise MQTT service via mDNS so the app can discover us
-  bool mdnsOk = MDNS.begin(("floyd-feeder-" + deviceChipId).c_str());
-  if (mdnsOk) {
-    MDNS.addService("mqtt", "tcp", 1883);
-    Serial.println("mDNS started: floyd-feeder-" + deviceChipId + ".local");
+  // mDNS when STA has an IP (home LAN discovery). Skipped in hotspot-only mode.
+  if (WiFi.status() == WL_CONNECTED) {
+    bool mdnsOk = MDNS.begin(("floyd-feeder-" + deviceChipId).c_str());
+    if (mdnsOk) {
+      MDNS.addService("mqtt", "tcp", 1883);
+      Serial.println("mDNS started: floyd-feeder-" + deviceChipId + ".local");
+    } else {
+      Serial.println("WARNING: mDNS failed to start");
+    }
   } else {
-    Serial.println("WARNING: mDNS failed to start");
+    Serial.println("mDNS skipped (STA not connected — use Direct AP + 192.168.4.1)");
   }
 
   // Start embedded MQTT broker on port 1883
   broker.init(1883);
   Serial.println("MQTT broker started on port 1883");
 
-  // Start persistent SoftAP for direct connections (phone connects to feeder's WiFi)
-  // The AP IP is always 192.168.4.1 — app connects via MQTT to that address
-  WiFi.mode(WIFI_AP_STA);
+  // SoftAP: always on so a phone can connect directly. Use AP-only when no STA to
+  // avoid dual-radio contention and improve phone association reliability.
   String apName = "FloydFeeder-" + deviceChipId;
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.mode(WIFI_AP_STA);
+  } else {
+    WiFi.mode(WIFI_AP);
+  }
   WiFi.softAP(apName.c_str());
   Serial.println("SoftAP started: " + apName + " (IP: " + WiFi.softAPIP().toString() + ")");
-  Serial.println("Direct mode: connect phone WiFi to " + apName + " then MQTT to 192.168.4.1:1883");
+  Serial.println("Direct: WiFi " + apName + " -> MQTT mqtt://192.168.4.1:1883");
 
   Serial.println("Setup complete. Ready for local MQTT.");
   Serial.println("Device ID:    " + deviceChipId);

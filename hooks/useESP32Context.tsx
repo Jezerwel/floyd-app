@@ -116,7 +116,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 	const [chipId, setChipIdState] = useState<string | null>(initialChipId);
 	const [connectionMode, setConnectionModeState] = useState<
 		"auto" | "direct-ap"
-	>("auto");
+	>("direct-ap");
 	const [deviceData, setDeviceData] = useState<ESP32Data>({});
 	const [isAutoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 	const [autoRefreshInterval, setAutoRefreshInterval] = useState(
