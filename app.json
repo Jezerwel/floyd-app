@@ -33,9 +33,6 @@
           "backgroundColor": "#ffffff"
         }
       ],
-      [
-        "@prisma/react-native"
-      ],
       "expo-font",
       "expo-web-browser",
       "expo-image",

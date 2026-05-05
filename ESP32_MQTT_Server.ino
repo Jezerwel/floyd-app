@@ -878,11 +878,6 @@ void handleMQTTMessage(const String& message) {
     rsp["timestamp"] = millis();
     broadcastResponse(rsp);
 
-  } else if (action == "ping") {
-    handlePing(0);
-
-  } else if (action == "get_schedules")
-
   } else if (action == "restart_provisioning") {
     StaticJsonDocument<256> rsp;
     rsp["type"]              = "control_response";

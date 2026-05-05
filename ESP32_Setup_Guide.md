@@ -6,18 +6,18 @@ MQTT-based firmware for the ESP32 fish feeder with L298N motor driver, HC-SR04 u
 
 ## Required Components
 
-| Item | Qty |
-|------|-----|
-| ESP32 NodeMCU (ESP-12E) | 1 |
-| L298N Dual H-Bridge Motor Driver | 1 |
-| HC-SR04 Ultrasonic Sensor | 1 |
-| DS18B20 Temperature Sensor (TO-92) | 1 |
-| DC Motors — Auger + Impeller (12V, 200-800mA) | 2 |
-| 12V 2A DC Power Supply | 1 |
-| 5V 1A USB Power Adapter | 1 |
-| Resistors: 1kΩ, 2kΩ, 4.7kΩ | 1 each |
-| Capacitors: 100µF electrolytic, 0.1µF ceramic | 1, 2 |
-| Jumper wires + breadboard | ~20 |
+| Item                                          | Qty    |
+| --------------------------------------------- | ------ |
+| ESP32 NodeMCU (ESP-12E)                       | 1      |
+| L298N Dual H-Bridge Motor Driver              | 1      |
+| HC-SR04 Ultrasonic Sensor                     | 1      |
+| DS18B20 Temperature Sensor (TO-92)            | 1      |
+| DC Motors — Auger + Impeller (12V, 200-800mA) | 2      |
+| 12V 2A DC Power Supply                        | 1      |
+| 5V 1A USB Power Adapter                       | 1      |
+| Resistors: 1kΩ, 2kΩ, 4.7kΩ                    | 1 each |
+| Capacitors: 100µF electrolytic, 0.1µF ceramic | 1, 2   |
+| Jumper wires + breadboard                     | ~20    |
 
 ---
 
@@ -33,21 +33,21 @@ MQTT-based firmware for the ESP32 fish feeder with L298N motor driver, HC-SR04 u
 
 ### 2. Required Libraries
 
-| Library | Version | Purpose |
-|---------|---------|---------|
-| PubSubClient | latest | MQTT client |
-| WiFiManager (tzapu) | v2.0.17+ | Captive portal provisioning |
-| ArduinoJson (Benoit Blanchon) | v7.x | JSON message parsing |
-| OneWire | v2.3.0 (NOT 2.3.5+) | DS18B20 protocol |
-| DallasTemperature | v3.11.1 | DS18B20 high-level API |
-| WiFi.h | (built-in) | WiFi connectivity |
+| Library                       | Version             | Purpose                     |
+| ----------------------------- | ------------------- | --------------------------- |
+| PubSubClient                  | latest              | MQTT client                 |
+| WiFiManager (tzapu)           | v2.0.17+            | Captive portal provisioning |
+| ArduinoJson (Benoit Blanchon) | v7.x                | JSON message parsing        |
+| OneWire                       | v2.3.0 (NOT 2.3.5+) | DS18B20 protocol            |
+| DallasTemperature             | v3.11.1             | DS18B20 high-level API      |
+| WiFi.h                        | (built-in)          | WiFi connectivity           |
 
 > **OneWire warning:** not applicable (DS18B20 not connected)
 
 ### 3. Flash Firmware
 
 1. Open `ESP32_MQTT_Server.ino` in Arduino IDE
-2. Select COM port under *Tools → Port*
+2. Select COM port under _Tools → Port_
 3. Set baud rate: `115200`, Flash Size: `4MB (FS:1MB OTA:~1019KB)`
 4. **Upload** (Ctrl+U)
 5. Open Serial Monitor (115200 baud) to watch boot sequence
@@ -58,37 +58,37 @@ MQTT-based firmware for the ESP32 fish feeder with L298N motor driver, HC-SR04 u
 
 ### L298N → ESP32
 
-| L298N | ESP32 | Function |
-|-------|-------|----------|
-| ENA | GPIO14 (GPIO14) | Auger PWM speed |
-| IN1 | GPIO12 (GPIO12) | Auger Direction 1 |
-| IN2 | GPIO13 (GPIO13) | Auger Direction 2 |
-| ENB | GPIO0 (GPIO0) | Impeller PWM speed |
-| IN3 | GPIO15 (GPIO15) | Impeller Direction 3 |
-| IN4 | GPIO16 (GPIO16) | Impeller Direction 4 |
-| 12V | — | 12V PSU positive |
-| GND | — | Shared ground bus |
+| L298N | ESP32           | Function             |
+| ----- | --------------- | -------------------- |
+| ENA   | GPIO14 (GPIO14) | Auger PWM speed      |
+| IN1   | GPIO12 (GPIO12) | Auger Direction 1    |
+| IN2   | GPIO13 (GPIO13) | Auger Direction 2    |
+| ENB   | GPIO0 (GPIO0)   | Impeller PWM speed   |
+| IN3   | GPIO15 (GPIO15) | Impeller Direction 3 |
+| IN4   | GPIO16 (GPIO16) | Impeller Direction 4 |
+| 12V   | —               | 12V PSU positive     |
+| GND   | —               | Shared ground bus    |
 
 **Critical:** Remove ENA/ENB jumper caps for PWM control. Leave 5V enable jumper in place.
 
 ### HC-SR04 → ESP32
 
-| HC-SR04 | ESP32 | Note |
-|---------|-------|------|
-| VCC | 5V (VU) | 5V required |
-| TRIG | GPIO5 (GPIO5) | 10µs pulse |
-| ECHO | GPIO4 (GPIO4) | Via 1kΩ→2kΩ voltage divider |
-| GND | GND | Shared ground |
+| HC-SR04 | ESP32         | Note                        |
+| ------- | ------------- | --------------------------- |
+| VCC     | 5V (VU)       | 5V required                 |
+| TRIG    | GPIO5 (GPIO5) | 10µs pulse                  |
+| ECHO    | GPIO4 (GPIO4) | Via 1kΩ→2kΩ voltage divider |
+| GND     | GND           | Shared ground               |
 
 **NOTE:** HC-SR04 ultrasonic sensor is not currently connected
 
 ### DS18B20 → ESP32
 
-| DS18B20 | ESP32 | Note |
-|---------|-------|------|
-| VDD | 3.3V | |
-| DQ | GPIO2 (GPIO2) | 4.7kΩ pull-up to 3.3V |
-| GND | GND | Shared ground |
+| DS18B20 | ESP32         | Note                  |
+| ------- | ------------- | --------------------- |
+| VDD     | 3.3V          |                       |
+| DQ      | GPIO2 (GPIO2) | 4.7kΩ pull-up to 3.3V |
+| GND     | GND           | Shared ground         |
 
 **NOTE:** DS18B20 temperature sensor is not currently connected
 
@@ -109,37 +109,43 @@ MQTT-based firmware for the ESP32 fish feeder with L298N motor driver, HC-SR04 u
 
 ## MQTT Topics
 
-| Topic | Direction | Purpose |
-|-------|-----------|---------|
-| `floyd/devices/{chipId}/telemetry` | ESP → Cloud | Sensor data |
-| `floyd/devices/{chipId}/status` | ESP → Cloud | Connection state (retained) |
-| `floyd/devices/{chipId}/command` | Cloud → ESP | Feed/stop/jam/ping commands |
-| `floyd/devices/{chipId}/response` | ESP → Cloud | Command acknowledgments |
-| `floyd/devices/{chipId}/config` | Cloud → ESP | Container geometry updates |
+| Topic                              | Direction | Purpose                     |
+| ---------------------------------- | --------- | --------------------------- |
+| `floyd/devices/{chipId}/telemetry` | ESP → App | Sensor data                 |
+| `floyd/devices/{chipId}/status`    | ESP → App | Connection state (retained) |
+| `floyd/devices/{chipId}/command`   | App → ESP | Feed/stop/jam/ping commands |
+| `floyd/devices/{chipId}/response`  | ESP → App | Command acknowledgments     |
+| `floyd/devices/{chipId}/config`    | App → ESP | Container geometry updates  |
 
 ---
 
 ## Troubleshooting
 
 ### ESP won't boot
+
 - GPIO15 (GPIO15) must be LOW — check L298N IN3 connection
 - GPIO0 (GPIO0) must be HIGH — check for pull-ups
 - GPIO2 (GPIO2) pulled LOW? 4.7kΩ pull-up to 3.3V required
 
 ### Motors don't move
+
 - ENA/ENB jumper caps removed? (required for PWM)
 - Shared ground connected? (L298N GND ≡ ESP GND ≡ PSU GND)
 - L298N 5V enable jumper in place?
 
 ### HC-SR04 reads 0 or max
+
 - VCC connected to 5V (not 3.3V)?
 - ECHO voltage divider wired correctly?
 - Sensor facing downward with clear acoustic cone?
 
 ### DS18B20 reads 85°C
+
 - not applicable (DS18B20 not connected)
 
 ### MQTT won't connect
-- Check Serial Monitor for broker URL
-- Public broker: `broker.hivemq.com:1883` (plain TCP)
-- TLS cluster: `setInsecure()` and port 8883
+
+- Check Serial Monitor for broker IP
+- The ESP32 runs an embedded broker on port 1883 — no external broker needed
+- Verify the app and ESP32 are on the same WiFi network
+- Check that mDNS is working: `dns-sd -B _mqtt._tcp local.` should show `floyd-feeder-{chipId}`
