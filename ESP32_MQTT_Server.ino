@@ -940,6 +940,14 @@ void setup() {
   broker.init(1883);
   Serial.println("MQTT broker started on port 1883");
 
+  // Start persistent SoftAP for direct connections (phone connects to feeder's WiFi)
+  // The AP IP is always 192.168.4.1 — app connects via MQTT to that address
+  WiFi.mode(WIFI_AP_STA);
+  String apName = "FloydFeeder-" + deviceChipId;
+  WiFi.softAP(apName.c_str());
+  Serial.println("SoftAP started: " + apName + " (IP: " + WiFi.softAPIP().toString() + ")");
+  Serial.println("Direct mode: connect phone WiFi to " + apName + " then MQTT to 192.168.4.1:1883");
+
   Serial.println("Setup complete. Ready for local MQTT.");
   Serial.println("Device ID:    " + deviceChipId);
   Serial.println("MQTT ID:      " + mqttClientId);

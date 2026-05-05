@@ -79,6 +79,8 @@ interface ESP32ContextType {
 	deviceData: ESP32Data;
 	chipId: string | null;
 	setChipId: (chipId: string | null) => void;
+	connectionMode: "auto" | "direct-ap";
+	setConnectionMode: (mode: "auto" | "direct-ap") => void;
 	connect: () => void;
 	disconnect: () => void;
 	resetConnection: () => void;
@@ -112,6 +114,9 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 	initialChipId = null,
 }) => {
 	const [chipId, setChipIdState] = useState<string | null>(initialChipId);
+	const [connectionMode, setConnectionModeState] = useState<
+		"auto" | "direct-ap"
+	>("auto");
 	const [deviceData, setDeviceData] = useState<ESP32Data>({});
 	const [isAutoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 	const [autoRefreshInterval, setAutoRefreshInterval] = useState(
@@ -138,12 +143,28 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 		feedLogJournalRef.current = feedLogs;
 	}, [feedLogs]);
 
+	// Load persisted connection mode
+	useEffect(() => {
+		AsyncStorage.getItem("floydConnectionMode")
+			.then((val) => {
+				if (val === "auto" || val === "direct-ap") {
+					setConnectionModeState(val);
+				}
+			})
+			.catch(() => {});
+	}, []);
+
+	const setConnectionMode = useCallback((mode: "auto" | "direct-ap") => {
+		setConnectionModeState(mode);
+		AsyncStorage.setItem("floydConnectionMode", mode).catch(console.error);
+	}, []);
+
 	const {
 		discoveredFeeder,
 		isScanning: _isMdnsScanning,
 		startScan,
 		stopScan: _stopScan,
-	} = useMDNS(chipId);
+	} = useMDNS(connectionMode === "auto" ? chipId : null);
 
 	const handleMessage = useCallback((message: MQTTMessage) => {
 		switch (message.type) {
@@ -236,19 +257,25 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 		resetConnection,
 	} = useMQTT(chipId, { onMessage: handleMessage });
 
-	// When chipId is set, start mDNS scan
+	// Auto-connect based on current mode
 	useEffect(() => {
-		if (chipId) {
+		if (!chipId) return;
+
+		if (connectionMode === "direct-ap") {
+			// Skip mDNS — connect directly to ESP32's SoftAP gateway
+			mqttConnect("mqtt://192.168.4.1:1883", chipId);
+		} else {
 			startScan();
 		}
-		return () => {
-			// mDNS scan cleanup handled by useMDNS hook
-		};
-	}, [chipId, startScan]);
 
-	// When feeder is discovered via mDNS, connect MQTT
+		return () => {
+			// cleanup handled by hooks
+		};
+	}, [chipId, connectionMode, startScan]);
+
+	// When feeder is discovered via mDNS (auto mode), connect MQTT
 	useEffect(() => {
-		if (discoveredFeeder && chipId) {
+		if (discoveredFeeder && chipId && connectionMode === "auto") {
 			const brokerUrl = `mqtt://${discoveredFeeder.host}:${discoveredFeeder.port}`;
 			mqttConnect(brokerUrl, chipId);
 		}
@@ -316,10 +343,14 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 	);
 
 	const connect = useCallback(() => {
-		if (chipId) {
+		if (!chipId) return;
+
+		if (connectionMode === "direct-ap") {
+			mqttConnect("mqtt://192.168.4.1:1883", chipId);
+		} else {
 			startScan();
 		}
-	}, [chipId, startScan]);
+	}, [chipId, connectionMode, startScan, mqttConnect]);
 
 	const disconnect = useCallback(() => {
 		mqttDisconnect();
@@ -359,6 +390,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 			deviceData,
 			chipId,
 			setChipId,
+			connectionMode,
+			setConnectionMode,
 			connect,
 			disconnect,
 			resetConnection,
@@ -385,6 +418,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 			deviceData,
 			chipId,
 			setChipId,
+			connectionMode,
+			setConnectionMode,
 			connect,
 			disconnect,
 			resetConnection,
