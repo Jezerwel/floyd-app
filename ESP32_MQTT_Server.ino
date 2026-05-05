@@ -894,6 +894,20 @@ void setup() {
     Serial.println("Connect your phone to FloydFeeder-" + deviceChipId + " then use app Direct AP.");
   }
 
+  // SoftAP: always on so a phone can connect directly. Use AP-only when no STA to
+  // avoid dual-radio contention and improve phone association reliability.
+  // MUST set WiFi mode BEFORE broker.init() — the broker's internal WiFiServer
+  // requires WiFi to be initialized, otherwise it creates a NULL semaphore → crash.
+  String apName = "FloydFeeder-" + deviceChipId;
+  if (WiFi.status() == WL_CONNECTED) {
+    WiFi.mode(WIFI_AP_STA);
+  } else {
+    WiFi.mode(WIFI_AP);
+  }
+  WiFi.softAP(apName.c_str());
+  Serial.println("SoftAP started: " + apName + " (IP: " + WiFi.softAPIP().toString() + ")");
+  Serial.println("Direct: WiFi " + apName + " -> MQTT mqtt://192.168.4.1:1883");
+
   // mDNS when STA has an IP (home LAN discovery). Skipped in hotspot-only mode.
   if (WiFi.status() == WL_CONNECTED) {
     bool mdnsOk = MDNS.begin(("floyd-feeder-" + deviceChipId).c_str());
@@ -908,20 +922,9 @@ void setup() {
   }
 
   // Start embedded MQTT broker on port 1883
+  // WiFi must already be in AP / AP_STA mode before this call.
   broker.init(1883);
   Serial.println("MQTT broker started on port 1883");
-
-  // SoftAP: always on so a phone can connect directly. Use AP-only when no STA to
-  // avoid dual-radio contention and improve phone association reliability.
-  String apName = "FloydFeeder-" + deviceChipId;
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFi.mode(WIFI_AP_STA);
-  } else {
-    WiFi.mode(WIFI_AP);
-  }
-  WiFi.softAP(apName.c_str());
-  Serial.println("SoftAP started: " + apName + " (IP: " + WiFi.softAPIP().toString() + ")");
-  Serial.println("Direct: WiFi " + apName + " -> MQTT mqtt://192.168.4.1:1883");
 
   Serial.println("Setup complete. Ready for local MQTT.");
   Serial.println("Device ID:    " + deviceChipId);
