@@ -33,14 +33,14 @@ MQTT-based firmware for the ESP32 fish feeder with L298N motor driver, HC-SR04 u
 
 ### 2. Required Libraries
 
-| Library                       | Version             | Purpose                     |
-| ----------------------------- | ------------------- | --------------------------- |
-| PubSubClient                  | latest              | MQTT client                 |
-| WiFiManager (tzapu)           | v2.0.17+            | Captive portal provisioning |
-| ArduinoJson (Benoit Blanchon) | v7.x                | JSON message parsing        |
-| OneWire                       | v2.3.0 (NOT 2.3.5+) | DS18B20 protocol            |
-| DallasTemperature             | v3.11.1             | DS18B20 high-level API      |
-| WiFi.h                        | (built-in)          | WiFi connectivity           |
+| Library                       | Version             | Purpose                          |
+| ----------------------------- | ------------------- | -------------------------------- |
+| NimBLE-Arduino                | (board package)     | BLE GATT server — **enable NimBLE in Arduino ESP32 tools** |
+| ArduinoJson (Benoit Blanchon) | v7.x                | JSON message parsing             |
+| sMQTTBroker (terrorsl)        | compatible w/ sketch | Embedded broker (SoftAP mode)   |
+| WiFi.h                        | (built-in)          | SoftAP in fallback mode        |
+
+Captive-portal WiFiManager, ESPmDNS, and ezTime are **not** used in the current `ESP32_MQTT_Server.ino` revision. Time sync comes from the mobile app (BLE time characteristic or MQTT when in AP mode).
 
 > **OneWire warning:** not applicable (DS18B20 not connected)
 

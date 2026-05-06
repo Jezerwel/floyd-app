@@ -1,0 +1,128 @@
+{
+  "reviewer": "correctness",
+  "findings": [
+    {
+      "id": "CORR-001",
+      "severity": "P0",
+      "title": "MQTT broker callback never registered — all remote commands silently ignored",
+      "description": "The function `onBrokerMessage` (line 143) is defined to dispatch incoming MQTT messages but is NEVER registered with the broker. The broker is instantiated as `sMQTTBroker broker` (line 47) with calls to `init()` (line 926), `update()` (line 954), and `publish()` only. There is no `broker.onMessage(onBrokerMessage)` or equivalent registration call anywhere in setup() or loop(). Without registration, every incoming MQTT command — feed, stop, jam clear, ping, config change, schedule update — is silently dropped. The firmware can broadcast telemetry/status but cannot receive commands.",
+      "lines": [47, 143, 926],
+      "confidence": 100,
+      "anchor": "100 — definitive logic error: the callback is defined but never wired to the broker. Zero interpretation needed."
+    },
+    {
+      "id": "CORR-002",
+      "severity": "P1",
+      "title": "strncpy calls do not null-terminate when source fills the buffer — undefined behavior",
+      "description": "All four `strncpy` calls in `set_schedules` (lines 820-823) pass `n` equal to the maximum expected source length rather than `sizeof(dst)-1`. When the source string is the maximum length (e.g., time \"08:00\" = 5 chars, daysOfWeek \"0,1,2,3,4,5,6\" = 13 chars), `strncpy` copies exactly `n` characters WITHOUT a null terminator. This works by accident only because the `ScheduleStore` is zero-initialized in BSS; after the first `set_schedules` call, `sch.time[5]` retains its previous value. When `String(sch.time)` is later constructed in `checkSchedules`, it reads past the array boundary until a zero byte is found. Same for `sch.id[12]` (n=12), `sch.label[32]` (n=32), and `sch.daysOfWeek[13]` (n=13).",
+      "lines": [820, 821, 822, 823],
+      "confidence": 100,
+      "anchor": "100 — definitive UB: strncpy contract violation. Buffer sizes declared ensure n==sizeof(dst) with no space for null."
+    },
+    {
+      "id": "CORR-003",
+      "severity": "P1",
+      "title": "sendDeviceStatus is dead code — never called anywhere",
+      "description": "The function `sendDeviceStatus` (line 637 definition) is declared at line 184 and defined at line 637, but no call site exists. It is not invoked from `handleMQTTMessage`, `loop()`, or any other function. The status reporting path (published to `topicStatus` with retrained flag) is completely unreachable. Combined with CORR-001, there is NO way for a client to query device status via MQTT — the `ping` action calls `handlePing` (different function), and no action calls `sendDeviceStatus`.",
+      "lines": [184, 637],
+      "confidence": 100,
+      "anchor": "100 — grep for sendDeviceStatus( yields zero matches outside declaration/definition."
+    },
+    {
+      "id": "CORR-004",
+      "severity": "P2",
+      "title": "checkSchedules() uses raw millis() subtraction without overflow protection",
+      "description": "The debounce check at line 164 uses direct unsigned subtraction `nowMillis - sch.lastFired < 59000`. When `millis()` wraps after ~50 days of uptime, this comparison produces incorrect results — a schedule that fired long before the overflow can have `nowMillis - sch.lastFired` underflow to a value < 59000 (incorrectly suppressing the feed) or > 59000 (causing an extra feed). The rest of the firmware correctly uses the `elapsedSince()` helper (line 175) which handles overflow, but `checkSchedules()` does not.",
+      "lines": [164, 175],
+      "confidence": 75,
+      "anchor": "75 — full trace: elapsedSince() exists but isn't used. The exact window of incorrect behavior depends on timing of overflow relative to lastFired."
+    },
+    {
+      "id": "CORR-005",
+      "severity": "P2",
+      "title": "NTP is never re-synced after initial success — time drifts unbounded",
+      "description": "`syncNTP()` (line 118) uses a `static bool ntpSynced` flag. Once `waitForSync()` succeeds, `ntpSynced` is set to `true` permanently and `waitForSync()` is NEVER called again. Subsequent calls only run `events()` (ezTime event processing, which handles incremental drift correction via NTP polling but does NOT perform a full sync). If the initial NTP sync failed, it retries every 60 seconds. But if it succeeded once, it never re-syncs. ESP32's internal RTC drifts significantly (~50 ppm = ~4 seconds/day), so schedules can slip by minutes over days.",
+      "lines": [118, 119, 120, 121, 122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135],
+      "confidence": 75,
+      "anchor": "75 — code trace clear: static bool is set once and never cleared. However, ezTime's events() may do some internal NTP polling (library-dependent)."
+    },
+    {
+      "id": "CORR-006",
+      "severity": "P2",
+      "title": "checkSchedules() runs every loop() iteration with no rate limit",
+      "description": "`checkSchedules()` is called unconditionally from `loop()` (line 957). It iterates up to 10 schedules, constructs `String` objects, and does string comparisons. There is no interval throttle (unlike NTP at 60s, WiFi check at 30s, or sensor reads at `cfg.sensorInterval`). With `delay(10)` at the end of loop, this runs ~100 times/second, consuming CPU cycles unnecessarily. While functionally correct due to the 59s debounce, it wastes CPU and contributes to heap fragmentation from temporary String allocations.",
+      "lines": [957, 149, 150, 151, 152, 162, 163, 164, 165],
+      "confidence": 95,
+      "anchor": "95 — verified: no conditional guard around checkSchedules() call in loop(). Compare with the throttled calls around it."
+    },
+    {
+      "id": "CORR-007",
+      "severity": "P2",
+      "title": "Sensor readings are hardcoded to 0 — stub implementation",
+      "description": "`readSensors()` (line 466) unconditionally sets `sensors.foodLevelPercentage = 0` and prints \"sensors not available\". No ultrasonic or temperature sensor is actually read despite these being listed in the task scope. The `broadcastSensorData()` path and `sendSensorData()` response both report 0% food level at `cfg.sensorInterval` intervals. This is labeled as Floyd Feeder v2.1 firmware but the sensor integration is a stub.",
+      "lines": [466, 467, 468, 469, 470, 471],
+      "confidence": 100,
+      "anchor": "100 — literal code: 'sensors not available' and foodLevelPercentage = 0 with no sensor pin init or ADC read."
+    },
+    {
+      "id": "CORR-008",
+      "severity": "P2",
+      "title": "Switch-case fall-through in motorStateLabel for unknown states returns 'idle' instead of 'unknown'",
+      "description": "The `motorStateLabel()` function (line 293) returns \"idle\" in the `default` case. The enum has `STATE_STOPPING` which IS listed in the enum (line 191) but NOT in the switch. When the state machine is in STATE_STOPPING, the label returns \"idle\", which is misleading — the motors ARE stopped but the system is in a transient stopping state, not true idle. Telemetry and responses report \"idle\" while the system is in the middle of an emergency stop.",
+      "lines": [191, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 293, 294, 295, 296, 297, 298, 299, 300, 302],
+      "confidence": 100,
+      "anchor": "100 — enum includes STATE_STOPPING, switch default returns 'idle' = mislabeling of active state."
+    },
+    {
+      "id": "CORR-009",
+      "severity": "P2",
+      "title": "restart_provisioning publishes response, then wipes NVS before broker can deliver it",
+      "description": "In the `restart_provisioning` handler (line ~841), `broadcastResponse(rsp)` is called to queue the response, then 200ms later the code manually publishes the same response via `broker.publish()`, then immediately clears NVS and reboots. The 200ms delay is a fragile timing hack — there is no guarantee the broker has delivered the response to subscribers before `prefs.clear()` + `ESP.restart()` executes. Clients may never receive the acknowledgment. Additionally, the `broadcastResponse` call is redundant since the code immediately does a manual `broker.publish()`.",
+      "lines": [841, 842, 843, 844, 845, 846, 847, 848],
+      "confidence": 75,
+      "anchor": "75 — broker delivery is async; delay(200) is a timing guess. Race between restart and MQTT TX completion."
+    },
+    {
+      "id": "CORR-010",
+      "severity": "P2",
+      "title": "sensorInterval stored twice in config JSON with different paths — ambiguous for clients",
+      "description": "`sendDeviceStatus()` includes `sensorInterval` twice in the response: once at `data.sensorInterval` (line 648) and once inside `data.feederConfig.sensorInterval` (line 655). When `handleMQTTMessage` processes `set_sensor_interval`, it updates only `cfg.sensorInterval` and saves config (line 681). But `sendDeviceStatus` is dead code (CORR-003), so the duplicate is only cosmetic today. If `sendDeviceStatus` is ever enabled, clients reading `feederConfig.sensorInterval` vs `data.sensorInterval` would get the same value, but the redundancy is confusing.",
+      "lines": [648, 655],
+      "confidence": 75,
+      "anchor": "75 — cosmetic today due to dead code, but a real ambiguity if sendDeviceStatus is activated."
+    },
+    {
+      "id": "CORR-011",
+      "severity": "P2",
+      "title": "WiFi event handler registered but never deregistered — potential dangling callback on restart",
+      "description": "`onWiFiEvent` is registered at line 377 via `WiFi.onEvent(onWiFiEvent)` during `connectToWiFi()`. This registration persists in WiFi stack memory. If the event handler callback address changes after a reconnection attempt (e.g., OTA update), the stale callback pointer could be invoked. On ESP32, `WiFi.onEvent()` adds to a linked list and is never removed — calling `connectToWiFi()` again would add a duplicate registration. Although `connectToWiFi()` is called only once in setup(), the lack of deregistration is fragile.",
+      "lines": [377, 378, 379, 380, 381, 382, 383, 384, 385],
+      "confidence": 50,
+      "anchor": "50 — requires runtime scenario (reconnect or OTA) not currently present. The function is called once in setup(), so no issue today."
+    },
+    {
+      "id": "CORR-012",
+      "severity": "P2",
+      "title": "Feed schedule time parsing uses String(sch.time) which may include garbage bytes from unterminated buffer",
+      "description": "In `checkSchedules()` (line 158), `String schTime = String(sch.time)` constructs a String from the `char time[6]` field. Due to the `strncpy` bug (CORR-002), `sch.time` may lack a null terminator. `String(const char*)` calls `strlen()` internally, which scans until a zero byte. If the byte at `sch.time[5]` is non-zero (which can happen after subsequent `set_schedules` calls don't re-zero the buffer), the String constructor reads past the array boundary into adjacent memory (the next field in the struct), causing undefined behavior and incorrect schedule matches.",
+      "lines": [158, 822],
+      "confidence": 85,
+      "anchor": "85 — downstream consequence of CORR-002. Directly traceable: unterminated char array → String constructor reads past bounds."
+    }
+  ],
+  "residual_risks": [
+    "NVS wear: saveConfig() and saveSchedules() call prefs.begin/end on every write. NVS flash endurance is ~100k cycles. With frequent set_sensor_interval or set_config calls, this could wear out the NVS partition within months.",
+    "StaticJsonDocument sizes (512 bytes) may overflow if schedule data grows — the get_schedules response uses a 2048-byte document which is adequate for 10 schedules but has no guard against future expansion.",
+    "GPIO0 (MOTOR_B_ENB) is a strapping pin on ESP32. The code's comment (line 227) acknowledges this but relies on ledcAttach pulling it HIGH. If external hardware drives GPIO0 low during boot, the ESP32 enters download mode instead of running the firmware. This is a hardware design risk beyond firmware scope.",
+    "MQTT topic string construction uses String concatenation in setupMQTTTopics(). If deviceChipId produces an unusually long string, topics could exceed practical MQTT limits (~256 bytes). deviceChipId is 8 hex chars, so this is safe today."
+  ],
+  "testing_gaps": [
+    "No test verifies that the broker callback is registered — this is a wiring test that catches the dead-silent command handler (CORR-001).",
+    "No millis()-overflow test for schedules. The elapsedSince() helper is tested via motor state machine but schedules use raw arithmetic (CORR-004).",
+    "No integration test verifies NTP synchronization is maintained over days of uptime (re-sync path, CORR-005).",
+    "No boundary test for schedule time strings: \"08:00\" (exactly 5 chars), empty time, non-HH:MM formats.",
+    "No negative test: send invalid JSON to command topic and verify error response is published.",
+    "No stress test: rapid-fire commands to verify pendingResponse is not overwritten.",
+    "No reboot-recovery test: power cycle during feeding, verify motor state machine is reset to STATE_IDLE on boot."
+  ]
+}

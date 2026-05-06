@@ -1,6 +1,6 @@
 # Floyd Feeder — Codebase Documentation
 
-Local WiFi fish feeder: React Native mobile app + ESP32 firmware with embedded MQTT broker.
+Local fish feeder: React Native mobile app + ESP32 firmware. **Primary transport is BLE (GATT)**; **MQTT** is used only when the ESP32 is in SoftAP + broker mode (manual fallback).
 
 ---
 
@@ -10,45 +10,45 @@ Local WiFi fish feeder: React Native mobile app + ESP32 firmware with embedded M
 graph TB
     subgraph App["React Native App (Expo)"]
         UI["Screens: Dashboard, Controls, Schedule, Logs"]
-        CTX["useESP32Context (MQTT + mDNS)"]
-        MDNS["useMDNS (discovery)"]
+        CTX["useESP32Context (BLE + MQTT fallback)"]
+        BLEH["useBLEDiscovery / useBLETransport"]
         AS["AsyncStorage (feed logs)"]
     end
-    subgraph HW["ESP32 Feeder (Local WiFi)"]
-        BROKER["Embedded MQTT Broker (sMQTTBroker)"]
-        MDNS2["ESPmDNS (advertising)"]
-        NTP["ezTime (NTP time sync)"]
+    subgraph HW["ESP32 Feeder"]
+        BLEE["NimBLE GATT"]
+        BROKER["sMQTTBroker (AP mode)"]
         SCHED["Schedule Store (NVS)"]
         FW["Motor Control + Sensors"]
         L298N["L298N → Auger + Impeller"]
     end
     UI --> CTX
-    CTX --> MDNS
-    MDNS -- mDNS discovery --> MDNS2
-    CTX -- mqtt://{ip}:1883 --> BROKER
+    CTX --> BLEH
     CTX --> AS
+    BLEH -- "default" --> BLEE
+    CTX -- "mqtt://192.168.4.1:1883 (fallback)" --> BROKER
+    BLEE --> FW
     BROKER --> FW
-    FW --> L298N
     BROKER --> SCHED
-    BROKER --> NTP
 ```
 
-**No cloud dependencies.** The ESP32 runs an embedded MQTT broker on port 1883 and advertises itself via mDNS as `floyd-feeder-{chipId}.local`. The app discovers it on the same WiFi network and connects directly.
+**No cloud dependencies.** The phone stores the feeder `chipId` in AsyncStorage. Commands and telemetry use the same JSON `type` / `data` / `timestamp` shape on both transports.
 
 ---
 
 ## 2. Data Flow
 
-MQTT topics under `floyd/devices/{chipId}/`:
+**BLE:** Floyd service `4fafc201-1fb5-459e-8fcc-c5c9c331914b` with characteristics `…91401`–`…91408` (command, response, telemetry, status, schedules, config, time, feed log). Command writes mirror MQTT command JSON: `{ action, parameters, timestamp }`. Notifications carry the same payloads as MQTT topic messages.
+
+**MQTT (fallback only):** Topics under `floyd/devices/{chipId}/`:
 
 | Topic | Direction | Payload |
 |-------|-----------|---------|
 | `telemetry` | ESP → App | Sensor data (temp, distance, food%) |
 | `status` | ESP → App | Connection state (retained) |
-| `command` | App → ESP | `start_feed`, `stop_feed`, `clear_jam`, `get_sensors`, `get_schedules`, `set_schedules` |
+| `command` | App → ESP | `start_feed`, `stop_feed`, `clear_jam`, `get_sensors`, `get_schedules`, `set_schedules`, `switch_mode`, … |
 | `response` | ESP → App | `feed_complete`, `jam_clear_complete`, `schedules_list`, errors |
 
-All communication is local WiFi (no internet required after provisioning). Feed history is persisted on-device via AsyncStorage.
+Feed history is persisted on the phone via AsyncStorage.
 
 ---
 
@@ -57,23 +57,23 @@ All communication is local WiFi (no internet required after provisioning). Feed 
 ```
 floyd-app/
 ├── app/                        # Expo Router pages
-│   ├── _layout.tsx             # Root providers (GestureHandler, MQTT context, Theme)
+│   ├── _layout.tsx             # Root providers (GestureHandler, ESP32 context, Theme)
 │   ├── +not-found.tsx          # 404 screen
-│   ├── provision.tsx           # WebView-based WiFi provisioning (no cloud claim)
 │   └── (tabs)/
 │       ├── _layout.tsx         # Bottom tab navigator config
 │       ├── index.tsx           # Dashboard — sensor data, alerts, connection status
 │       ├── controls.tsx        # Manual feed — speed sliders, FEED/STOP/CLEAR JAM
-│       ├── schedule.tsx        # Schedule CRUD via MQTT — time picker, day toggles
+│       ├── schedule.tsx        # Schedule CRUD — BLE or MQTT
 │       └── history.tsx         # Feed logs from AsyncStorage, sensor history, alerts
 ├── components/
-│   ├── ESP32Connection.tsx   # LAN connection card (mDNS scan/disconnect/reconfigure)
+│   ├── ESP32Connection.tsx     # BLE-first connection card + SoftAP fallback
 │   └── ui/                     # Reusable UI components
 ├── hooks/
-│   ├── useMQTT.ts              # Core MQTT connection (mqtt.js v5, plaintext mqtt://)
-│   ├── useESP32Context.tsx    # Context provider: mDNS discovery + MQTT + feed logs
-│   ├── useMDNS.ts             # mDNS feeder discovery (react-native-zeroconf)
-│   ├── useScheduleMQTT.ts     # Schedule CRUD over MQTT
+│   ├── useMQTT.ts              # MQTT (SoftAP fallback)
+│   ├── useBLETransport.ts      # GATT connection, notifies, chunked schedules
+│   ├── useBLEDiscovery.ts      # BLE scan for FloydFeeder-* peripherals
+│   ├── useESP32Context.tsx     # Dual transport context + feed logs
+│   ├── useScheduleMQTT.ts      # Schedule sync (uses context transport)
 │   ├── useAlerts.ts            # Derived alerts from sensor data
 │   └── useMountEffect.ts       # Mount-only effect
 ├── constants/
@@ -91,21 +91,21 @@ floyd-app/
 
 | Feature | Description |
 |---------|-------------|
-| **Device Provisioning** | WiFiManager captive portal via WebView; local-only, no cloud claim |
+| **BLE setup** | Scan `FloydFeeder-{chipId}`, tap to store chip ID and connect |
 | **Live Dashboard** | Connection status, food level gauge, temperature, motor state, alerts |
 | **Manual Controls** | Auger/impeller speed sliders, feed duration, FEED/STOP/CLEAR JAM |
-| **Feeding Schedules** | Full CRUD over MQTT; ESP32-side cron with NTP time sync |
+| **Feeding Schedules** | Full CRUD over BLE or MQTT; ESP32-side cron after phone time sync |
 | **History & Logs** | Feed logs persisted in AsyncStorage, real-time sensor log, alert log |
 | **Alert System** | Low/critical food, high/low temp, sensor disconnect |
 | **Light/Dark Theme** | Marine green palette, full light and dark mode |
-| **Cross-Platform** | iOS, Android, Web |
-| **mDNS Discovery** | Auto-discovers feeder on same WiFi via `floyd-feeder-{chipId}.local` |
+| **Cross-Platform** | iOS, Android (BLE requires native dev client; not Expo Go) |
+| **SoftAP fallback** | User switches device to AP + MQTT; app connects to `192.168.4.1:1883` |
 
 ---
 
-## 5. Schedule CRUD via MQTT
+## 5. Schedule CRUD
 
-Schedules are stored on the ESP32 in NVS (Preferences) and synced via MQTT commands:
+Schedules are stored on the ESP32 in NVS (Preferences) and synced via the active transport (BLE command / schedule characteristic chunking, or MQTT):
 
 **Get schedules:**
 ```json

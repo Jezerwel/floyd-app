@@ -1,15 +1,16 @@
 import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { router } from "expo-router";
 import React, { useCallback } from "react";
 import {
 	ActivityIndicator,
+	FlatList,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
 	View,
 } from "react-native";
 import { useESP32 } from "../hooks/useESP32Context";
+import type { DiscoveredFeederBle } from "../hooks/transportTypes";
 import { IconSymbol } from "./ui/IconSymbol";
 import { StatCard } from "./ui/StatCard";
 
@@ -20,354 +21,251 @@ const ESP32Connection: React.FC = () => {
 		error,
 		connectionAttempts,
 		chipId,
-		connectionMode,
-		setConnectionMode,
-		connect,
+		activeTransport,
+		feederLinkPhase,
 		disconnect,
 		resetConnection,
-		publishCommand,
 		setChipId,
+		bleDevices,
+		isBleScanning,
+		bleDiscoveryError,
+		bleRssi,
+		startBleScan,
+		connectBleDevice,
+		beginApWifiFallback,
+		connectMqttToSoftAp,
 	} = useESP32();
 
 	const colorScheme = useColorScheme();
 	const colors = Colors[colorScheme === "dark" ? "dark" : "light"];
 
-	const handleConnect = () => {
-		connect();
-	};
-
-	const handleDisconnect = () => {
-		disconnect();
-	};
-
-	const handleProvision = () => {
-		router.push("/provision");
-	};
-
-	const handleReconfigure = useCallback(() => {
-		publishCommand("restart_provisioning");
-		setChipId(null);
-		router.push("/provision");
-	}, [publishCommand, setChipId]);
-
 	const currentApName = chipId ? `FloydFeeder-${chipId}` : "FloydFeeder-XXXX";
+
+	const handleScanAgain = useCallback(() => {
+		void startBleScan();
+	}, [startBleScan]);
+
+	const handleSelectFeeder = useCallback(
+		(item: DiscoveredFeederBle) => {
+			connectBleDevice(item.deviceId, item.chipId);
+		},
+		[connectBleDevice],
+	);
+
+	const handleForgetFeeder = useCallback(() => {
+		setChipId(null);
+	}, [setChipId]);
+
+	const handleWifiFallback = useCallback(async () => {
+		await beginApWifiFallback();
+	}, [beginApWifiFallback]);
 
 	return (
 		<View style={styles.container}>
-			{/* Connection mode toggle — always visible */}
-			<View style={[styles.modeToggle, { backgroundColor: colors.card }]}>
-				<TouchableOpacity
-					style={[
-						styles.modeOption,
-						connectionMode === "auto" && {
-							backgroundColor: colors.primary,
-						},
-					]}
-					onPress={() => setConnectionMode("auto")}
-				>
-					<IconSymbol
-						name="wifi"
-						size={14}
-						color={connectionMode === "auto" ? "white" : colors.muted}
-					/>
-					<Text
-						style={[
-							styles.modeOptionText,
-							{
-								color: connectionMode === "auto" ? "white" : colors.muted,
-							},
-						]}
-					>
-						Home WiFi
-					</Text>
-				</TouchableOpacity>
-				<TouchableOpacity
-					style={[
-						styles.modeOption,
-						connectionMode === "direct-ap" && {
-							backgroundColor: colors.primary,
-						},
-					]}
-					onPress={() => setConnectionMode("direct-ap")}
-				>
-					<IconSymbol
-						name="antenna.radiowaves.left.and.right"
-						size={14}
-						color={connectionMode === "direct-ap" ? "white" : colors.muted}
-					/>
-					<Text
-						style={[
-							styles.modeOptionText,
-							{
-								color: connectionMode === "direct-ap" ? "white" : colors.muted,
-							},
-						]}
-					>
-						Direct AP
-					</Text>
-				</TouchableOpacity>
-			</View>
-
-			{!chipId && (
+			{feederLinkPhase === "ble" && !chipId && (
 				<StatCard
-					title="Feeder Connection"
+					title="Set Up Feeder"
 					icon="antenna.radiowaves.left.and.right"
 					color={colors.primary}
 				>
 					<View style={styles.formContainer}>
-						<View style={styles.cloudInfoContainer}>
+						<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+							Power on your Floyd Feeder, enable Bluetooth, then choose it from
+							the list below.
+						</Text>
+						{(bleDiscoveryError || error) && (
 							<View
 								style={[
-									styles.cloudIconContainer,
-									{ backgroundColor: colors.primary + "15" },
+									styles.errorContainer,
+									{ backgroundColor: colors.error + "20" },
 								]}
 							>
-								<IconSymbol
-									name="antenna.radiowaves.left.and.right"
-									size={32}
-									color={colors.primary}
-								/>
+								<Text style={[styles.errorText, { color: colors.error }]}>
+									{bleDiscoveryError || error}
+								</Text>
 							</View>
-							<Text style={[styles.cloudTitle, { color: colors.text }]}>
-								No Feeder Configured
-							</Text>
-							<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
-								Set up a Floyd Feeder to get started.
-							</Text>
-						</View>
-
+						)}
+						{isBleScanning ? (
+							<View style={styles.cloudInfoContainer}>
+								<ActivityIndicator size="large" color={colors.primary} />
+								<Text style={[styles.cloudTitle, { color: colors.text }]}>
+									Scanning for feeders…
+								</Text>
+							</View>
+						) : null}
+						<FlatList
+							data={bleDevices}
+							keyExtractor={(i) => i.deviceId}
+							style={styles.deviceList}
+							ListEmptyComponent={
+								!isBleScanning ? (
+									<Text
+										style={[styles.cloudSubtitle, { color: colors.muted }]}
+									>
+										No feeders found yet. Tap Scan to try again.
+									</Text>
+								) : null
+							}
+							renderItem={({ item }) => (
+								<TouchableOpacity
+									style={[
+										styles.deviceRow,
+										{ backgroundColor: colors.card, borderColor: colors.border },
+									]}
+									onPress={() => handleSelectFeeder(item)}
+									accessibilityRole="button"
+									accessibilityLabel={`Connect to ${item.deviceName}`}
+								>
+									<IconSymbol
+										name="antenna.radiowaves.left.and.right"
+										size={20}
+										color={colors.primary}
+									/>
+									<View style={styles.deviceRowText}>
+										<Text style={[styles.deviceName, { color: colors.text }]}>
+											{item.deviceName}
+										</Text>
+										<Text style={[styles.rssiText, { color: colors.muted }]}>
+											RSSI {item.rssi} dBm
+										</Text>
+									</View>
+									<IconSymbol
+										name="chevron.right"
+										size={16}
+										color={colors.muted}
+									/>
+								</TouchableOpacity>
+							)}
+						/>
 						<TouchableOpacity
 							style={[
 								styles.connectButton,
-								{ backgroundColor: colors.success },
+								{ backgroundColor: colors.primary },
 							]}
-							onPress={handleProvision}
+							onPress={handleScanAgain}
 							accessibilityRole="button"
-							accessibilityLabel="Open feeder provisioning"
+							accessibilityLabel="Scan for feeders"
 						>
-							<IconSymbol name="link" size={18} color="white" />
-							<Text style={styles.connectButtonText}>Set Up Feeder</Text>
+							<IconSymbol name="arrow.clockwise" size={18} color="white" />
+							<Text style={styles.connectButtonText}>
+								{isBleScanning ? "Scanning…" : "Scan again"}
+							</Text>
 						</TouchableOpacity>
 					</View>
 				</StatCard>
 			)}
 
-			{chipId && !isConnected && (
+			{feederLinkPhase === "ble" && chipId && !isConnected && (
 				<StatCard
-					title={
-						connectionMode === "direct-ap"
-							? "Connect via Direct AP"
-							: "Searching..."
-					}
-					icon={
-						connectionMode === "direct-ap"
-							? "antenna.radiowaves.left.and.right"
-							: "magnifyingglass"
-					}
+					title="Connecting via Bluetooth"
+					icon="antenna.radiowaves.left.and.right"
 					color={colors.warning}
 				>
 					<View style={styles.formContainer}>
-						{connectionMode === "direct-ap" ? (
-							<>
-								{/* Direct AP instructions */}
-								<View style={styles.cloudInfoContainer}>
-									<View
-										style={[
-											styles.cloudIconContainer,
-											{ backgroundColor: colors.warning + "15" },
-										]}
+						{(error || bleDiscoveryError) && (
+							<View
+								style={[
+									styles.errorContainer,
+									{ backgroundColor: colors.error + "20" },
+								]}
+							>
+								<Text style={[styles.errorText, { color: colors.error }]}>
+									{error || bleDiscoveryError}
+								</Text>
+								{connectionAttempts > 0 && (
+									<Text
+										style={[styles.errorSubtext, { color: colors.error }]}
 									>
-										<IconSymbol
-											name="antenna.radiowaves.left.and.right"
-											size={32}
-											color={colors.warning}
-										/>
-									</View>
-									<Text style={[styles.cloudTitle, { color: colors.text }]}>
-										Connect to Feeder WiFi
+										Attempt {connectionAttempts}
 									</Text>
-									<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
-										Go to your phone&apos;s WiFi settings and connect to:
-									</Text>
-									<View
-										style={[
-											styles.apNameBadge,
-											{ backgroundColor: colors.primary + "20" },
-										]}
-									>
-										<Text style={[styles.apNameText, { color: colors.text }]}>
-											{currentApName}
-										</Text>
-									</View>
-									<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
-										Then come back and tap Connect below.
-									</Text>
-								</View>
-
-								<TouchableOpacity
-									style={[
-										styles.connectButton,
-										{
-											backgroundColor: colors.primary,
-										},
-									]}
-									onPress={handleConnect}
-									disabled={isConnecting}
-									accessibilityRole="button"
-									accessibilityLabel="Connect to direct AP"
-								>
-									{isConnecting ? (
-										<>
-											<ActivityIndicator size="small" color="white" />
-											<Text style={styles.connectButtonText}>
-												Connecting...
-											</Text>
-										</>
-									) : (
-										<>
-											<IconSymbol
-												name="antenna.radiowaves.left.and.right"
-												size={18}
-												color="white"
-											/>
-											<Text style={styles.connectButtonText}>Connect</Text>
-										</>
-									)}
-								</TouchableOpacity>
-							</>
-						) : (
-							<>
-								{/* Auto mode — existing MQTT/mDNS flow */}
-								{error && (
-									<View
-										style={[
-											styles.errorContainer,
-											{ backgroundColor: colors.error + "20" },
-										]}
-									>
-										<Text style={[styles.errorText, { color: colors.error }]}>
-											{error}
-										</Text>
-										{connectionAttempts > 0 && (
-											<Text
-												style={[styles.errorSubtext, { color: colors.error }]}
-											>
-												Attempt {connectionAttempts}
-											</Text>
-										)}
-										<View style={styles.troubleshootingContainer}>
-											<Text
-												style={[
-													styles.troubleshootingTitle,
-													{ color: colors.warning },
-												]}
-											>
-												Troubleshooting Tips:
-											</Text>
-											<Text
-												style={[
-													styles.troubleshootingText,
-													{ color: colors.muted },
-												]}
-											>
-												• Make sure the feeder is plugged in{"\n"}• Confirm it
-												is on the same WiFi network{"\n"}• Or switch to
-												&quot;Direct AP&quot; mode above
-											</Text>
-										</View>
-									</View>
 								)}
-
-								<View style={styles.cloudInfoContainer}>
-									{isConnecting ? (
-										<>
-											<ActivityIndicator size="large" color={colors.primary} />
-											<Text style={[styles.cloudTitle, { color: colors.text }]}>
-												Looking for Floyd Feeder...
-											</Text>
-											<Text
-												style={[styles.cloudSubtitle, { color: colors.muted }]}
-											>
-												Make sure it&apos;s plugged in and on the same network
-											</Text>
-										</>
-									) : (
-										<>
-											<View
-												style={[
-													styles.cloudIconContainer,
-													{ backgroundColor: colors.warning + "15" },
-												]}
-											>
-												<IconSymbol
-													name="wifi.slash"
-													size={32}
-													color={colors.warning}
-												/>
-											</View>
-											<Text style={[styles.cloudTitle, { color: colors.text }]}>
-												Feeder Not Found
-											</Text>
-											<Text
-												style={[styles.cloudSubtitle, { color: colors.muted }]}
-											>
-												Device {chipId}
-											</Text>
-											<Text
-												style={[styles.cloudSubtitle, { color: colors.muted }]}
-											>
-												Could not discover the feeder on this network.
-											</Text>
-										</>
-									)}
-								</View>
-
-								<TouchableOpacity
-									style={[
-										styles.connectButton,
-										{
-											backgroundColor: colors.primary,
-										},
-									]}
-									onPress={handleConnect}
-									disabled={isConnecting}
-									accessibilityRole="button"
-									accessibilityLabel="Scan for feeder"
-								>
-									{isConnecting ? (
-										<>
-											<ActivityIndicator size="small" color="white" />
-											<Text style={styles.connectButtonText}>Scanning...</Text>
-										</>
-									) : (
-										<>
-											<IconSymbol
-												name="arrow.clockwise"
-												size={18}
-												color="white"
-											/>
-											<Text style={styles.connectButtonText}>Scan Again</Text>
-										</>
-									)}
-								</TouchableOpacity>
-							</>
+							</View>
 						)}
-
+						<ActivityIndicator size="large" color={colors.primary} />
+						<Text style={[styles.cloudTitle, { color: colors.text }]}>
+							{isConnecting
+								? `Connecting to ${currentApName}…`
+								: `Looking for ${currentApName}…`}
+						</Text>
+						<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+							Keep the feeder powered and nearby. You can also use direct Wi‑Fi
+							below if Bluetooth keeps failing.
+						</Text>
 						<TouchableOpacity
 							style={[
 								styles.connectButton,
-								{ backgroundColor: colors.warning },
+								{ backgroundColor: colors.primary },
 							]}
-							onPress={handleReconfigure}
-							accessibilityRole="button"
-							accessibilityLabel="Reconfigure feeder"
+							onPress={handleScanAgain}
 						>
-							<IconSymbol name="gear" size={18} color="white" />
-							<Text style={styles.connectButtonText}>Reconfigure</Text>
+							<Text style={styles.connectButtonText}>Scan again</Text>
 						</TouchableOpacity>
 					</View>
 				</StatCard>
 			)}
+
+			{(feederLinkPhase === "wifi_instructions" ||
+				feederLinkPhase === "wifi_mqtt") &&
+				!isConnected && (
+					<StatCard
+						title="Connect via Direct Wi‑Fi"
+						icon="antenna.radiowaves.left.and.right"
+						color={colors.warning}
+					>
+						<View style={styles.formContainer}>
+							<View style={styles.cloudInfoContainer}>
+								<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+									On your phone, open Settings → Wi‑Fi and join:
+								</Text>
+								<View
+									style={[
+										styles.apNameBadge,
+										{ backgroundColor: colors.primary + "20" },
+									]}
+								>
+									<Text style={[styles.apNameText, { color: colors.text }]}>
+										{currentApName}
+									</Text>
+								</View>
+								<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+									Return here and tap Connect. MQTT will use
+									192.168.4.1:1883.
+								</Text>
+							</View>
+							{error ? (
+								<Text style={[styles.errorText, { color: colors.error }]}>
+									{error}
+								</Text>
+							) : null}
+							<TouchableOpacity
+								style={[
+									styles.connectButton,
+									{ backgroundColor: colors.primary },
+								]}
+								onPress={connectMqttToSoftAp}
+								disabled={isConnecting}
+							>
+								{isConnecting ? (
+									<>
+										<ActivityIndicator size="small" color="white" />
+										<Text style={styles.connectButtonText}>Connecting…</Text>
+									</>
+								) : (
+									<Text style={styles.connectButtonText}>Connect</Text>
+								)}
+							</TouchableOpacity>
+							<TouchableOpacity
+								style={[
+									styles.connectButton,
+									{ backgroundColor: colors.muted },
+								]}
+								onPress={disconnect}
+							>
+								<Text style={styles.connectButtonText}>Back to Bluetooth</Text>
+							</TouchableOpacity>
+						</View>
+					</StatCard>
+				)}
 
 			{isConnected && (
 				<StatCard
@@ -388,15 +286,25 @@ const ESP32Connection: React.FC = () => {
 							</Text>
 						</View>
 						<Text style={[styles.serverUrl, { color: colors.muted }]}>
-							{connectionMode === "direct-ap"
-								? "Connected via Direct AP (192.168.4.1)"
-								: "Connected via local WiFi"}
+							{activeTransport === "mqtt"
+								? "Connected via direct Wi‑Fi (MQTT)"
+								: `Connected via Bluetooth${
+										bleRssi != null ? ` · RSSI ${bleRssi} dBm` : ""
+									}`}
 						</Text>
+
+						{activeTransport === "ble" && (
+							<TouchableOpacity onPress={() => void handleWifiFallback()}>
+								<Text style={[styles.linkText, { color: colors.primary }]}>
+									Connect via Wi‑Fi instead
+								</Text>
+							</TouchableOpacity>
+						)}
 
 						<View style={styles.actionsContainer}>
 							<TouchableOpacity
 								style={[styles.actionButton, { backgroundColor: colors.error }]}
-								onPress={handleDisconnect}
+								onPress={disconnect}
 								accessibilityRole="button"
 								accessibilityLabel="Disconnect"
 							>
@@ -420,13 +328,13 @@ const ESP32Connection: React.FC = () => {
 
 						<TouchableOpacity
 							style={[styles.reconfigureButton, { borderColor: colors.muted }]}
-							onPress={handleReconfigure}
+							onPress={handleForgetFeeder}
 							accessibilityRole="button"
-							accessibilityLabel="Reconfigure feeder WiFi"
+							accessibilityLabel="Forget this feeder"
 						>
-							<IconSymbol name="gear" size={14} color={colors.muted} />
+							<IconSymbol name="trash" size={14} color={colors.muted} />
 							<Text style={[styles.reconfigureText, { color: colors.muted }]}>
-								Reconfigure Device
+								Forget feeder
 							</Text>
 						</TouchableOpacity>
 					</View>
@@ -439,26 +347,6 @@ const ESP32Connection: React.FC = () => {
 const styles = StyleSheet.create({
 	container: {
 		gap: 16,
-	},
-	modeToggle: {
-		flexDirection: "row",
-		borderRadius: 10,
-		padding: 3,
-		gap: 3,
-	},
-	modeOption: {
-		flex: 1,
-		flexDirection: "row",
-		alignItems: "center",
-		justifyContent: "center",
-		paddingVertical: 10,
-		paddingHorizontal: 12,
-		borderRadius: 8,
-		gap: 6,
-	},
-	modeOptionText: {
-		fontSize: 13,
-		fontWeight: "600",
 	},
 	errorContainer: {
 		padding: 12,
@@ -479,14 +367,6 @@ const styles = StyleSheet.create({
 		alignItems: "center",
 		paddingVertical: 16,
 		gap: 8,
-	},
-	cloudIconContainer: {
-		width: 64,
-		height: 64,
-		borderRadius: 32,
-		alignItems: "center",
-		justifyContent: "center",
-		marginBottom: 8,
 	},
 	cloudTitle: {
 		fontSize: 18,
@@ -510,6 +390,7 @@ const styles = StyleSheet.create({
 		fontSize: 12,
 		fontFamily: "monospace",
 		marginTop: 4,
+		textAlign: "center",
 	},
 	connectButton: {
 		flexDirection: "row",
@@ -579,20 +460,34 @@ const styles = StyleSheet.create({
 		fontSize: 12,
 		fontWeight: "500",
 	},
-	troubleshootingContainer: {
-		marginTop: 12,
-		paddingTop: 12,
-		borderTopWidth: 1,
-		borderTopColor: "#ffffff20",
+	deviceList: {
+		maxHeight: 220,
+		width: "100%",
 	},
-	troubleshootingTitle: {
-		fontSize: 13,
+	deviceRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		padding: 12,
+		borderRadius: 10,
+		borderWidth: 1,
+		marginBottom: 8,
+		gap: 12,
+	},
+	deviceRowText: {
+		flex: 1,
+	},
+	deviceName: {
+		fontSize: 16,
 		fontWeight: "600",
-		marginBottom: 6,
 	},
-	troubleshootingText: {
+	rssiText: {
 		fontSize: 12,
-		lineHeight: 18,
+		marginTop: 2,
+	},
+	linkText: {
+		fontSize: 14,
+		fontWeight: "600",
+		marginTop: 4,
 	},
 });
 

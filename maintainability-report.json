@@ -1,0 +1,205 @@
+{
+  "reviewer": "maintainability",
+  "findings": [
+    {
+      "id": "MAINT-001",
+      "severity": "P0",
+      "confidence": 100,
+      "category": "dead_code",
+      "file": "app/provision.tsx",
+      "line": 17,
+      "description": "Dead branch: 'no_device' in ErrorKind type is never assigned. setErrorKind is only ever called with 'webview', so lines 338-345 are unreachable in practice.",
+      "detail": "ErrorKind type allows 'webview' | 'no_device'. errorKind defaults to 'webview'. All setErrorKind calls pass 'webview'. The JSX block at line 338 (errorKind === 'no_device') can never render. The setErrorKind('no_device') assignment was likely removed during refactoring but the branch was left.",
+      "recommendation": "Remove the 'no_device' variant from ErrorKind type and delete the dead JSX block (lines 338-345)."
+    },
+    {
+      "id": "MAINT-002",
+      "severity": "P0",
+      "confidence": 100,
+      "category": "dead_code",
+      "file": "components/ui/AnimatedButton.tsx",
+      "line": 26,
+      "description": "Unused component: AnimatedButton and AnimatedIconButton are never imported by any screen or parent component.",
+      "detail": "Both exports are defined with full gesture/haptic support but have zero consumers. grep 'AnimatedButton' across app/ and components/ returns only the definition file itself.",
+      "recommendation": "Delete AnimatedButton.tsx. If needed later, it's in git history."
+    },
+    {
+      "id": "MAINT-003",
+      "severity": "P0",
+      "confidence": 100,
+      "category": "dead_code",
+      "file": "components/ui/BatteryLevel.tsx",
+      "line": 10,
+      "description": "Unused component: BatteryLevel is never imported by any screen.",
+      "detail": "Defined with full styles and battery visualization logic. No consumer in the app. The dashboard shows food level via CircularProgress, not battery.",
+      "recommendation": "Delete BatteryLevel.tsx."
+    },
+    {
+      "id": "MAINT-004",
+      "severity": "P0",
+      "confidence": 100,
+      "category": "dead_code",
+      "file": "components/ui/CustomSlider.tsx",
+      "line": 21,
+      "description": "Unused component: CustomSlider is never imported, while controls.tsx has its own inline PctSlider that duplicates horizontal slider logic.",
+      "detail": "CustomSlider uses react-native-gesture-handler + reanimated for a horizontal slider. The only place a horizontal slider is needed (controls.tsx) reimplements the same thing as a local PctSlider function with TouchableOpacity. The implementation effort was duplicated.",
+      "recommendation": "Either replace the inline PctSlider in controls.tsx with CustomSlider, or delete CustomSlider.tsx. Keep one source of truth."
+    },
+    {
+      "id": "MAINT-005",
+      "severity": "P0",
+      "confidence": 100,
+      "category": "dead_code",
+      "file": "components/ui/DistanceSensor.tsx",
+      "line": 15,
+      "description": "Unused component: DistanceSensor is never imported by any screen.",
+      "detail": "Has minDistance/maxDistance props, status icons, and a visual bar indicator. Dashboard renders food level and distance inline via its own JSX rather than using this component.",
+      "recommendation": "Delete DistanceSensor.tsx."
+    },
+    {
+      "id": "MAINT-006",
+      "severity": "P0",
+      "confidence": 100,
+      "category": "dead_code",
+      "file": "components/ui/ErrorToast.tsx",
+      "line": 14,
+      "description": "Unused component: ErrorToast is never imported by any screen or parent.",
+      "detail": "Animated toast with timed auto-dismiss. No screen uses it. The app uses InlineError and ConnectionBadge instead.",
+      "recommendation": "Delete ErrorToast.tsx."
+    },
+    {
+      "id": "MAINT-007",
+      "severity": "P0",
+      "confidence": 100,
+      "category": "dead_code",
+      "file": "components/ui/PaddleControl.tsx",
+      "line": 16,
+      "description": "Unused component: PaddleControl is never imported by any screen.",
+      "detail": "Wraps VerticalSlider with a themed container. No consumer. This also means VerticalSlider.tsx is only reachable through PaddleControl — making it transitively dead code.",
+      "recommendation": "Delete PaddleControl.tsx and, if no other consumer exists, VerticalSlider.tsx."
+    },
+    {
+      "id": "MAINT-008",
+      "severity": "P0",
+      "confidence": 100,
+      "category": "dead_code",
+      "file": "components/ui/TabButton.tsx",
+      "line": 12,
+      "description": "Unused component: TabButton is never imported by any screen.",
+      "detail": "A segmented-control style tab button. The log tabs in history.tsx use inline TouchableOpacity styling instead of this component.",
+      "recommendation": "Delete TabButton.tsx."
+    },
+    {
+      "id": "MAINT-009",
+      "severity": "P0",
+      "confidence": 100,
+      "category": "dead_code",
+      "file": "components/ExternalLink.tsx",
+      "line": 8,
+      "description": "Unused component: ExternalLink is never imported by any app screen.",
+      "detail": "Utility component for rendering external links with expo-linking. Zero consumers in app/. Only +not-found.tsx references ThemedText/ThemedView but not ExternalLink.",
+      "recommendation": "Delete ExternalLink.tsx."
+    },
+    {
+      "id": "MAINT-010",
+      "severity": "P1",
+      "confidence": 75,
+      "category": "leftover_cloud_naming",
+      "file": "components/ESP32Connection.tsx",
+      "line": 118,
+      "description": "Cloud-residue naming: style classes cloudInfoContainer, cloudTitle, cloudSubtitle, cloudIconContainer are used for local WiFi / direct-AP connection UI that has no cloud dependency.",
+      "detail": "These four style names appear 17 times across the file in the no-device-configured and feeder-not-found sections. They suggest the UI was originally built for a cloud-broker discovery model that was later replaced by local MQTT/mDNS. The 'cloud' prefix is misleading — these are purely local-connection views.",
+      "recommendation": "Rename to statusInfoContainer, statusTitle, statusSubtitle, statusIconContainer (or similar local-meaning names)."
+    },
+    {
+      "id": "MAINT-011",
+      "severity": "P1",
+      "confidence": 75,
+      "category": "naming",
+      "file": "components/ui/InlineError.tsx",
+      "line": 1,
+      "description": "File named InlineError but its primary consumed export is ConnectionBadge. The InlineError component itself is unused.",
+      "detail": "InlineError.tsx exports two components: InlineError (unused) and ConnectionBadge (used in dashboard). A maintainer looking for ConnectionBadge wouldn't guess it lives in InlineError.tsx. The file name describes the wrong export.",
+      "recommendation": "Rename file to ConnectionBadge.tsx and extract/delete InlineError, or split into separate files."
+    },
+    {
+      "id": "MAINT-012",
+      "severity": "P1",
+      "confidence": 75,
+      "category": "icon_mismatch",
+      "file": "app/(tabs)/history.tsx",
+      "line": 203,
+      "description": "Wrong icon: 'house.fill' (home icon) used for the Sensor Logs header. house.fill is the dashboard tab icon.",
+      "detail": "Tab layout uses house.fill for the Dashboard tab. Using the same icon on the Logs/History page for its page header creates visual confusion — it looks like the user is on the dashboard.",
+      "recommendation": "Replace 'house.fill' with 'doc.text', 'list.bullet', 'chart.bar.fill', or another document/logs-appropriate icon."
+    },
+    {
+      "id": "MAINT-013",
+      "severity": "P1",
+      "confidence": 75,
+      "category": "duplication",
+      "file": "hooks/useAlerts.ts",
+      "lines": "18-23",
+      "description": "SENSOR_RANGES in useAlerts.ts duplicates validation ranges hardcoded as inline functions in DashboardScreen.",
+      "detail": "useAlerts.ts defines SENSOR_RANGES = { TEMPERATURE: { min: -40, max: 85 }, FOOD_LEVEL: { min: 0, max: 100 }, DISTANCE: { min: 0, max: 400 } }. DashboardScreen duplicates these as three isValid* functions: isValidTemperature(-40..85), isValidFoodLevel(0..100), isValidDistance(0..400). If ranges change, both must be updated in sync.",
+      "recommendation": "Export SENSOR_RANGES (or validation helpers) from useAlerts.ts or a shared constants file, and consume them in DashboardScreen."
+    },
+    {
+      "id": "MAINT-014",
+      "severity": "P2",
+      "confidence": 75,
+      "category": "inconsistent_imports",
+      "file": "components/ESP32Connection.tsx",
+      "line": 1,
+      "description": "Uses relative imports ('../hooks/...', './ui/...') while all other screens use '@/' path aliases.",
+      "detail": "ESP32Connection.tsx imports from '../hooks/useESP32Context' and './ui/IconSymbol' instead of '@/hooks/useESP32Context' and '@/components/ui/IconSymbol'. This is inconsistent and breaks if the component is moved to a different depth.",
+      "recommendation": "Replace relative imports with @/ aliases for consistency."
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "RISK-001",
+      "severity": "medium",
+      "confidence": 50,
+      "description": "useMountEffect is a one-line wrapper around useEffect(() => fn, []) that adds an abstraction layer without behavioral change. All 3 usages (SplashHider, useStoredChipId) could use useEffect directly. The wrapper costs a function boundary and module import for no gain.",
+      "file": "hooks/useMountEffect.ts",
+      "recommendation": "Inline useEffect calls directly. Delete useMountEffect.ts."
+    },
+    {
+      "id": "RISK-002",
+      "severity": "low",
+      "confidence": 50,
+      "description": "useAlerts hook is tightly coupled to useESP32Context. It directly accesses deviceData and isConnected from a global context. Any change to the shape of ESP32Data or the context API forces changes here. The hook also silently assumes the ESP32 provider exists above it in the tree.",
+      "file": "hooks/useAlerts.ts",
+      "recommendation": "Consider making deviceData a parameter rather than reaching into context directly, to decouple alert generation from connection state."
+    },
+    {
+      "id": "RISK-003",
+      "severity": "low",
+      "confidence": 50,
+      "description": "PctSlider in controls.tsx is an inline component that duplicates the functionality of CustomSlider.tsx. 18 lines of slider logic living inside the screen file rather than in a shared component. If sliders need consistent visual updates, both would need parallel changes.",
+      "file": "app/(tabs)/controls.tsx",
+      "lines": "19-48",
+      "recommendation": "Replace inline PctSlider with a refactored CustomSlider, or extract PctSlider to its own file."
+    }
+  ],
+  "testing_gaps": [
+    {
+      "id": "TGAP-001",
+      "severity": "medium",
+      "description": "9 out of 18 UI components in components/ui/ are unreferenced dead code. These have no tests and can't be tested since nothing exercises them. They add cognitive load during test writing — a future developer must first figure out which components are actually wired in.",
+      "files": [
+        "components/ui/AnimatedButton.tsx",
+        "components/ui/BatteryLevel.tsx",
+        "components/ui/CustomSlider.tsx",
+        "components/ui/DistanceSensor.tsx",
+        "components/ui/ErrorToast.tsx",
+        "components/ui/PaddleControl.tsx",
+        "components/ui/TabButton.tsx",
+        "components/ui/InlineError.tsx",
+        "components/ExternalLink.tsx"
+      ],
+      "recommendation": "Delete all unused components, then write tests for the remaining ~10 UI components. Without deletion first, test coverage targets on 'all components' are misleading — 47% of components have zero real-world usage."
+    }
+  ]
+}

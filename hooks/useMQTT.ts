@@ -33,6 +33,7 @@ interface MQTTState {
 
 interface UseMQTTOptions {
 	onMessage?: (message: MQTTMessage) => void;
+	onChipIdDiscovered?: (chipId: string) => void;
 }
 
 const useMQTT = (deviceChipId: string | null, options: UseMQTTOptions = {}) => {
@@ -47,10 +48,13 @@ const useMQTT = (deviceChipId: string | null, options: UseMQTTOptions = {}) => {
 	const clientRef = useRef<MqttClient | null>(null);
 	const chipIdRef = useRef(deviceChipId);
 	const onMessageRef = useRef(options.onMessage);
+	const onChipIdDiscoveredRef = useRef(options.onChipIdDiscovered);
 	const lastBrokerUrlRef = useRef<string | null>(null);
 	const connectingRef = useRef(false);
+	const discoveredChipIdsRef = useRef<Set<string>>(new Set());
 	chipIdRef.current = deviceChipId;
 	onMessageRef.current = options.onMessage;
+	onChipIdDiscoveredRef.current = options.onChipIdDiscovered;
 
 	const disconnect = useCallback(() => {
 		if (clientRef.current) {
@@ -78,15 +82,6 @@ const useMQTT = (deviceChipId: string | null, options: UseMQTTOptions = {}) => {
 			setState((prev) => ({
 				...prev,
 				error: "No feeder discovered yet",
-				isConnecting: false,
-			}));
-			return;
-		}
-
-		if (!chipId) {
-			setState((prev) => ({
-				...prev,
-				error: "No device has been provisioned yet",
 				isConnecting: false,
 			}));
 			return;
@@ -121,9 +116,15 @@ const useMQTT = (deviceChipId: string | null, options: UseMQTTOptions = {}) => {
 				connectionAttempts: 0,
 			}));
 
-			client.subscribe(`floyd/devices/${chipId}/telemetry`, { qos: 0 });
-			client.subscribe(`floyd/devices/${chipId}/status`, { qos: 0 });
-			client.subscribe(`floyd/devices/${chipId}/response`, { qos: 0 });
+			if (chipId) {
+				// Normal mode: subscribe to this device's topics
+				client.subscribe(`floyd/devices/${chipId}/telemetry`, { qos: 0 });
+				client.subscribe(`floyd/devices/${chipId}/status`, { qos: 0 });
+				client.subscribe(`floyd/devices/${chipId}/response`, { qos: 0 });
+			} else {
+				// Discovery mode: subscribe to wildcard to find any feeder
+				client.subscribe(`floyd/devices/+/status`, { qos: 0 });
+			}
 		});
 
 		client.on("reconnect", () => {
@@ -135,7 +136,18 @@ const useMQTT = (deviceChipId: string | null, options: UseMQTTOptions = {}) => {
 			}));
 		});
 
-		client.on("message", (_topic, payload) => {
+		client.on("message", (topic, payload) => {
+			// Wildcard discovery: extract chipId from topic like floyd/devices/abc123/status
+			const wildcardMatch = topic.match(/^floyd\/devices\/([^/]+)\/status$/);
+			if (wildcardMatch && !chipId) {
+				const discoveredId = wildcardMatch[1];
+				if (!discoveredChipIdsRef.current.has(discoveredId)) {
+					discoveredChipIdsRef.current.add(discoveredId);
+					onChipIdDiscoveredRef.current?.(discoveredId);
+				}
+				return; // discovery message — don't forward as normal message
+			}
+
 			try {
 				const raw = JSON.parse(payload.toString());
 				if (!raw || typeof raw !== "object") return;

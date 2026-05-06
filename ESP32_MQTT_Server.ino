@@ -1,15 +1,29 @@
-// Floyd Feeder v2.1 — L298N Motor Driver Firmware (Optimized)
-// ESP32 MQTT client controlling auger + impeller via L298N
+// Floyd Feeder v2.2 — BLE primary + SoftAP/MQTT fallback (NimBLE)
 #include <WiFi.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
-#include <ESPmDNS.h>
-#include <ezTime.h>
 #include <sMQTTBroker.h>
+#include <NimBLEDevice.h>
+#include <cstring>
+#include <time.h>
+#include <sys/time.h>
 
-// ——— Persisted Config ————————————————
-#define PREFS_NAMESPACE  "floyd-cfg"
-#define PREFS_KEY_CFG    "cfg"
+#define BLE_UUID_SERVICE      "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define BLE_UUID_COMMAND      "4fafc201-1fb5-459e-8fcc-c5c9c33191401"
+#define BLE_UUID_RESPONSE     "4fafc201-1fb5-459e-8fcc-c5c9c33191402"
+#define BLE_UUID_TELEMETRY    "4fafc201-1fb5-459e-8fcc-c5c9c33191403"
+#define BLE_UUID_STATUS       "4fafc201-1fb5-459e-8fcc-c5c9c33191404"
+#define BLE_UUID_SCHEDULES    "4fafc201-1fb5-459e-8fcc-c5c9c33191405"
+#define BLE_UUID_CONFIG       "4fafc201-1fb5-459e-8fcc-c5c9c33191406"
+#define BLE_UUID_TIME         "4fafc201-1fb5-459e-8fcc-c5c9c33191407"
+#define BLE_UUID_FEEDLOG      "4fafc201-1fb5-459e-8fcc-c5c9c33191408"
+
+#define PREFS_NAMESPACE   "floyd-cfg"
+#define PREFS_KEY_CFG     "cfg"
+#define PREFS_KEY_SCHEDULES "sched"
+#define PREFS_KEY_APMODE  "apmode"
+
+#define TIME_SYNC_MIN_EPOCH 1577836800UL
 
 struct AppConfig {
   float cylinderRadius        = 10.0f;
@@ -18,31 +32,25 @@ struct AppConfig {
   float frustumBottomRadius   = 5.0f;
   float frustumHeight         = 15.0f;
   unsigned long sensorInterval = 5000;
-  char wifiSSID[33]           = "";
-  char wifiPassword[65]       = "";
-  bool provisioned            = false;
 };
 
 AppConfig cfg;
 Preferences prefs;
-Timezone tzLocal;
 
-// ——— Schedule Persistence ——————————————
 #define MAX_SCHEDULES 10
-#define PREFS_KEY_SCHEDULES "sched"
 
 struct FeedSchedule {
-  char id[13];           // 12-char hex + null
-  char label[33];        // schedule name
-  char time[6];          // "HH:MM"
-  char daysOfWeek[14];   // "0,1,2,3,4,5,6"
+  char id[13];
+  char label[33];
+  char time[6];
+  char daysOfWeek[14];
   int augerSpeed;
   int impellerSpeed;
   unsigned long preSpinMs;
   unsigned long feedMs;
   unsigned long postSpinMs;
   bool enabled;
-  unsigned long lastFired; // millis() of last trigger
+  unsigned long lastFired;
 };
 
 struct ScheduleStore {
@@ -52,23 +60,47 @@ struct ScheduleStore {
 
 ScheduleStore scheduleStore;
 
-// ——— Device Identity ————————————————————
-String      deviceChipId = String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), HEX);
-String      mqttClientId = "floyd-" + deviceChipId;
-String      topicCommand;
-String      topicTelemetry;
-String      topicStatus;
-String      topicResponse;
+String deviceChipId = String((uint32_t)(ESP.getEfuseMac() & 0xFFFFFFFF), HEX);
+String mqttClientId = "floyd-" + deviceChipId;
+String topicCommand;
+String topicTelemetry;
+String topicStatus;
+String topicResponse;
 
-String      pendingCommandPayload;
-String      pendingResponse;
+String pendingCommandPayload;
+String pendingResponse;
 volatile bool pendingCommand = false;
 
-// ——— Embedded MQTT Broker ———————————————
-sMQTTBroker broker;
+bool apModeRuntime = false;
+unsigned long lastMqttRx = 0;
 
-// ——— Pin Definitions ————————————————————
-// L298N Motor Driver
+NimBLECharacteristic *bleRspChar = nullptr;
+NimBLECharacteristic *bleTelChar = nullptr;
+NimBLECharacteristic *bleStaChar = nullptr;
+NimBLECharacteristic *bleFeedlogChar = nullptr;
+
+static uint8_t schChunkBuf[4096];
+static size_t schChunkLen = 0;
+static uint16_t schChunkExpectTotal = 0;
+
+class FloydBroker : public sMQTTBroker {
+public:
+  bool onEvent(sMQTTEvent *event) override {
+    if (event->Type() == Public_sMQTTEventType) {
+      auto *e = static_cast<sMQTTPublicClientEvent *>(event);
+      String topic(e->Topic().c_str());
+      if (topic == topicCommand) {
+        lastMqttRx = millis();
+        pendingCommandPayload = String(e->Payload().c_str());
+        pendingCommand = true;
+      }
+    }
+    return true;
+  }
+};
+
+FloydBroker broker;
+
 #define MOTOR_A_ENA    14
 #define MOTOR_A_IN1    12
 #define MOTOR_A_IN2    13
@@ -76,13 +108,11 @@ sMQTTBroker broker;
 #define MOTOR_B_IN3    15
 #define MOTOR_B_IN4    16
 
-// ——— LEDC PWM Channels ——————————————————
 #define LEDC_CH_AUGER     0
 #define LEDC_CH_IMPELLER  1
-#define LEDC_FREQ         25000   // 25 kHz — above audible range
-#define LEDC_RESOLUTION   10      // 10-bit → 0-1023
+#define LEDC_FREQ         25000
+#define LEDC_RESOLUTION   10
 
-// ——— Feeding Sequence ———————————————————
 #define DEFAULT_PRE_SPIN_MS      1500
 #define DEFAULT_POST_SPIN_MS     1500
 #define DEFAULT_FEED_MS          3000
@@ -92,23 +122,12 @@ sMQTTBroker broker;
 #define DEFAULT_AUGER_SPEED      768
 #define DEFAULT_IMPELLER_SPEED   1023
 
-// ——— Container Geometry ————————————————
-// Two-part container: Cylinder (top) + Conical Frustum (bottom)
-// Transition point: 10 inches (= 25.4 cm) from sensor
 float totalVolumeCm3 = 0;
 
-// ——— Sensor Timing ——————————————————————
 unsigned long lastSensorRead = 0;
 #define MIN_SENSOR_INTERVAL      1000
 #define MAX_SENSOR_INTERVAL      60000
 
-// ——— WiFi / MQTT Reconnect ——————————————
-unsigned long lastWiFiCheck      = 0;
-unsigned long wifiDownSince       = 0;
-#define WIFI_CHECK_INTERVAL         30000
-#define WIFI_DOWN_REBOOT_MS         120000  // reboot if WiFi down > 2 min
-
-// ——— Motor State Machine ————————————————
 enum MotorState {
   STATE_IDLE,
   STATE_PRE_SPIN,
@@ -129,27 +148,21 @@ struct MotorControl {
   int           impellerSpeed  = DEFAULT_IMPELLER_SPEED;
 } motor;
 
-// ——— Sensor Data ————————————————————————
 struct SensorData {
   float foodLevelPercentage = 0;
 } sensors;
 
-// ——— Forward Declarations ———————————————
-void broadcastResponse(JsonDocument& doc);
+void broadcastResponse(JsonDocument &doc);
 void sendDeviceStatus(uint8_t num);
-const char* motorStateLabel(MotorState st);
+void flushPendingResponseTransport();
+void notifyBle(NimBLECharacteristic *ch, const String &json);
+bool buildDeviceStatusJson(JsonDocument &doc);
+const char *motorStateLabel(MotorState st);
 
-// ——— Broker Command Callback —————————————
-void onBrokerMessage(const String& topic, const String& message) {
-  if (topic == topicCommand) {
-    pendingCommandPayload = message;
-    pendingCommand = true;
-  }
+bool isTimeSynced() {
+  time_t t = time(nullptr);
+  return (unsigned long)t >= TIME_SYNC_MIN_EPOCH;
 }
-
-// ============================================================
-//  Preferences Config Save / Load
-// ============================================================
 
 void loadConfig() {
   prefs.begin(PREFS_NAMESPACE, false);
@@ -190,72 +203,44 @@ void saveSchedules() {
   Serial.printf("Saved %d schedules to NVS\n", scheduleStore.count);
 }
 
-void syncNTP() {
-  if (WiFi.status() != WL_CONNECTED) return;
-
-  static bool ntpSynced = false;
-  if (!ntpSynced) {
-    Serial.println("Syncing NTP time...");
-    if (waitForSync(10000)) {
-      tzLocal.setLocation(F("Asia/Shanghai"));  // default; user-configurable later
-      Serial.println("NTP synced: " + UTC.dateTime());
-      ntpSynced = true;
-    } else {
-      Serial.println("NTP sync timeout — will retry");
-    }
-  }
-
-  if (ntpSynced) {
-    events();  // ezTime event processing
-  }
-}
-
 void checkSchedules() {
-  if (timeStatus() == timeNotSet) return;  // no NTP time yet
+  if (!isTimeSynced()) return;
 
-  String nowTime = UTC.dateTime("H:i");    // "HH:MM"
-  int nowDow = UTC.dateTime("w").toInt();  // 0=Sun, 1=Mon, ...
+  time_t nowSec = time(nullptr);
+  struct tm tmLocal;
+  localtime_r(&nowSec, &tmLocal);
+
+  char nowTime[6];
+  snprintf(nowTime, sizeof(nowTime), "%02d:%02d", tmLocal.tm_hour, tmLocal.tm_min);
+  int nowDow = tmLocal.tm_wday;
 
   for (uint8_t i = 0; i < scheduleStore.count; i++) {
-    FeedSchedule& sch = scheduleStore.schedules[i];
+    FeedSchedule &sch = scheduleStore.schedules[i];
     if (!sch.enabled) continue;
 
-    String schTime = String(sch.time);
-    if (schTime != nowTime) continue;
+    if (strcmp(sch.time, nowTime) != 0) continue;
 
-    // Check day of week
     String days = String(sch.daysOfWeek);
     if (days.indexOf(String(nowDow)) < 0) continue;
 
-    // Prevent re-firing in the same minute
     if (sch.lastFired != 0) {
       unsigned long nowMillis = millis();
-      if (nowMillis - sch.lastFired < 59000) continue;  // 59s debounce
+      if (nowMillis - sch.lastFired < 59000) continue;
     }
 
-    // Fire the feed
     sch.lastFired = millis();
     startFeeding(sch.augerSpeed, sch.impellerSpeed, sch.preSpinMs, sch.feedMs, sch.postSpinMs);
 
-    Serial.printf("Scheduled feed: %s at %s\n", sch.label, nowTime.c_str());
+    Serial.printf("Scheduled feed: %s at %s\n", sch.label, nowTime);
   }
 }
-
-// ============================================================
-//  millis() Overflow-Safe Helper
-// ============================================================
 
 unsigned long elapsedSince(unsigned long since) {
   unsigned long now = millis();
   return (now >= since) ? (now - since) : (0xFFFFFFFF - since) + now + 1;
 }
 
-// ============================================================
-//  Board Setup Helpers
-// ============================================================
-
 void initMotorPins() {
-  // LEDC PWM for motor speed (25 kHz, 10-bit → 0-1023)
   ledcAttach(MOTOR_A_ENA, LEDC_FREQ, LEDC_RESOLUTION);
   ledcAttach(MOTOR_B_ENB, LEDC_FREQ, LEDC_RESOLUTION);
 
@@ -277,79 +262,31 @@ void setupMQTTTopics() {
   topicResponse  = "floyd/devices/" + deviceChipId + "/response";
 }
 
-// ============================================================
-//  WiFi Connection (+ Event Handler)
-// ============================================================
+void applyScheduleArray(JsonArray arr) {
+  scheduleStore.count = min((uint8_t)arr.size(), (uint8_t)MAX_SCHEDULES);
 
-void onWiFiEvent(WiFiEvent_t event) {
-  switch (event) {
-    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      Serial.println("WiFi disconnected (event)");
-      break;
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-      Serial.println("WiFi got IP: " + WiFi.localIP().toString());
-      break;
-    default:
-      break;
+  for (uint8_t i = 0; i < scheduleStore.count; i++) {
+    JsonObject obj = arr[i];
+    FeedSchedule &sch = scheduleStore.schedules[i];
+    strncpy(sch.id, obj["id"] | "", 12);
+    sch.id[12] = '\0';
+    strncpy(sch.label, obj["label"] | "Feed", 32);
+    sch.label[32] = '\0';
+    strncpy(sch.time, obj["time"] | "08:00", 5);
+    sch.time[5] = '\0';
+    strncpy(sch.daysOfWeek, obj["daysOfWeek"] | "0,1,2,3,4,5,6", 13);
+    sch.daysOfWeek[13] = '\0';
+    sch.augerSpeed = obj["augerSpeed"] | 768;
+    sch.impellerSpeed = obj["impellerSpeed"] | 1023;
+    sch.preSpinMs = obj["preSpinMs"] | 1500;
+    sch.feedMs = obj["feedMs"] | 3000;
+    sch.postSpinMs = obj["postSpinMs"] | 1500;
+    sch.enabled = obj["enabled"] | true;
+    sch.lastFired = 0;
   }
+
+  saveSchedules();
 }
-
-void connectToWiFi() {
-  WiFi.onEvent(onWiFiEvent);
-
-  Serial.print("Connecting to WiFi: ");
-  Serial.println(cfg.wifiSSID);
-
-  WiFi.begin(cfg.wifiSSID, cfg.wifiPassword);
-
-  unsigned long start = millis();
-  while (WiFi.status() != WL_CONNECTED && (millis() - start) < 15000) {
-    delay(500);
-    Serial.print(".");
-    yield();
-  }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("WiFi connected");
-    Serial.print("IP: ");  Serial.println(WiFi.localIP());
-    Serial.print("RSSI: "); Serial.print(WiFi.RSSI());
-    Serial.println(" dBm");
-  } else {
-    Serial.println("WiFi connection failed (will retry in loop)");
-  }
-}
-
-void checkWiFiConnection() {
-  // Hotspot-only / no STA credentials: nothing to monitor.
-  if (cfg.wifiSSID[0] == '\0') return;
-
-  // Running as SoftAP-only (STA failed or unused): do not watchdog-reboot.
-  wifi_mode_t mode = WiFi.getMode();
-  if (mode != WIFI_STA && mode != WIFI_AP_STA) return;
-
-  // DO NOT call WiFi.disconnect() + WiFi.begin() during reconnect.
-  // The ESP32 auto-reconnect runs on its own and will reject a
-  // manual begin() while "sta is connecting". Just monitor + reboot.
-  if (millis() - lastWiFiCheck < WIFI_CHECK_INTERVAL) return;
-  lastWiFiCheck = millis();
-
-  if (WiFi.status() != WL_CONNECTED) {
-    if (wifiDownSince == 0) {
-      wifiDownSince = millis();
-      Serial.println("WiFi disconnected — waiting for auto-reconnect...");
-    } else if (millis() - wifiDownSince > WIFI_DOWN_REBOOT_MS) {
-      Serial.println("WiFi down too long, rebooting...");
-      ESP.restart();
-    }
-  } else {
-    wifiDownSince = 0;  // connected, reset timer
-  }
-}
-
-// ============================================================
-//  Motor Driving Primitives (LEDC PWM @ 25 kHz)
-// ============================================================
 
 void setAugerMotor(int speed, bool forward) {
   speed = constrain(speed, 0, 1023);
@@ -388,11 +325,7 @@ void stopAllMotors() {
   digitalWrite(MOTOR_B_IN4, LOW);
 }
 
-// ============================================================
-//  Motor State Label Helper (single source of truth)
-// ============================================================
-
-const char* motorStateLabel(MotorState st) {
+const char *motorStateLabel(MotorState st) {
   switch (st) {
     case STATE_IDLE:       return "idle";
     case STATE_PRE_SPIN:   return "pre_spin";
@@ -403,15 +336,11 @@ const char* motorStateLabel(MotorState st) {
   }
 }
 
-// ============================================================
-//  Motor State Machine Tick
-// ============================================================
-
 void sendFeedingComplete();
 void sendJamClearComplete();
 
 void updateMotorState() {
-  MotorControl& mc = motor;
+  MotorControl &mc = motor;
   unsigned long elapsed = elapsedSince(mc.stateStartTime);
 
   switch (mc.state) {
@@ -460,10 +389,6 @@ void updateMotorState() {
   }
 }
 
-// ============================================================
-//  Feed Trigger & Jam Clear
-// ============================================================
-
 void startFeeding(int augerSpeed, int impellerSpeed,
                   unsigned long preSpinMs, unsigned long feedMs, unsigned long postSpinMs) {
   preSpinMs     = constrain(preSpinMs, 500, 5000);
@@ -481,7 +406,7 @@ void startFeeding(int augerSpeed, int impellerSpeed,
   setImpellerMotor(impellerSpeed);
   setAugerMotor(0, true);
 
-  motor.state         = STATE_PRE_SPIN;
+  motor.state          = STATE_PRE_SPIN;
   motor.stateStartTime = millis();
 }
 
@@ -494,18 +419,14 @@ void startJamClear(int speed, unsigned long duration) {
   setImpellerMotor(0);
   setAugerMotor(speed, false);
 
-  motor.state         = STATE_JAM_CLEAR;
+  motor.state          = STATE_JAM_CLEAR;
   motor.stateStartTime = millis();
 }
 
 void emergencyStop() {
-  motor.state         = STATE_STOPPING;
+  motor.state          = STATE_STOPPING;
   motor.stateStartTime = millis();
 }
-
-// ============================================================
-//  Volume-Based Food Level Calculation
-// ============================================================
 
 float frustumVolume(float h, float R, float r) {
   return (PI / 3.0f) * h * (R * R + R * r + r * r);
@@ -546,10 +467,6 @@ float calculateFoodLevel(float distanceCm) {
   return constrain(pct, 0, 100);
 }
 
-// ============================================================
-//  Sensors
-// ============================================================
-
 SensorData readSensors() {
   yield();
 
@@ -564,66 +481,49 @@ SensorData readSensors() {
   return sensors;
 }
 
-// ============================================================
-//  JSON Response Helpers
-// ============================================================
+void notifyBle(NimBLECharacteristic *ch, const String &json) {
+  if (!ch || apModeRuntime || json.length() == 0) return;
+  ch->setValue(json.c_str());
+  ch->notify();
+}
 
-void broadcastResponse(JsonDocument& doc) {
+void flushPendingResponseTransport() {
+  if (pendingResponse.length() == 0) return;
+  if (apModeRuntime) {
+    broker.publish(topicResponse.c_str(), pendingResponse.c_str());
+  } else if (bleRspChar) {
+    notifyBle(bleRspChar, pendingResponse);
+  }
+  pendingResponse = "";
+}
+
+void broadcastResponse(JsonDocument &doc) {
   String output;
   serializeJson(doc, output);
   pendingResponse = output;
 }
 
-// Single helper to fill motor/sensor fields into a JsonObject
-void fillMotorData(JsonObject& data) {
-  data["motorState"]     = motorStateLabel(motor.state);
-  data["augerSpeed"]     = motor.augerSpeed;
-  data["impellerSpeed"]  = motor.impellerSpeed;
+void fillMotorData(JsonObject &data) {
+  data["motorState"]    = motorStateLabel(motor.state);
+  data["augerSpeed"]    = motor.augerSpeed;
+  data["impellerSpeed"] = motor.impellerSpeed;
 }
 
-void fillSensorData(JsonObject& data) {
+void fillSensorData(JsonObject &data) {
   data["foodLevelPercentage"] = round(sensors.foodLevelPercentage * 10.0f) / 10.0f;
 }
 
-// ============================================================
-//  MQTT Messaging
-// ============================================================
-
-void broadcastSensorData() {
-  StaticJsonDocument<512> doc;
-  doc["type"] = "sensor_data";
-  JsonObject data = doc.createNestedObject("data");
-  fillSensorData(data);
-  fillMotorData(data);
-  doc["timestamp"] = millis();
-
-  String output;
-  serializeJson(doc, output);
-  broker.publish(topicTelemetry.c_str(), output.c_str());
-}
-
-void sendSensorData(uint8_t num) {
-  (void)num;
-  StaticJsonDocument<512> doc;
-  doc["type"] = "sensor_data";
-  JsonObject data = doc.createNestedObject("data");
-  fillSensorData(data);
-  fillMotorData(data);
-  doc["timestamp"] = millis();
-  broadcastResponse(doc);
-}
-
-void sendDeviceStatus(uint8_t num) {
-  (void)num;
-  StaticJsonDocument<512> doc;
+bool buildDeviceStatusJson(JsonDocument &doc) {
   doc["type"] = "status";
   JsonObject data = doc.createNestedObject("data");
-  data["connected"]  = true;
-  data["uptime"]     = millis();
-  data["freeHeap"]   = ESP.getFreeHeap();
-  data["wifiRssi"]   = WiFi.RSSI();
+  data["connected"]   = true;
+  data["uptime"]      = millis();
+  data["freeHeap"]    = ESP.getFreeHeap();
+  data["wifiRssi"]    = apModeRuntime ? WiFi.RSSI() : 0;
   data["sensorInterval"] = cfg.sensorInterval;
-  data["motorState"] = motorStateLabel(motor.state);
+  data["motorState"]  = motorStateLabel(motor.state);
+  data["timeSynced"]  = isTimeSynced();
+  data["apMode"]      = apModeRuntime;
 
   JsonObject fcfg = data.createNestedObject("feederConfig");
   fcfg["cylinderRadius"]      = cfg.cylinderRadius;
@@ -639,10 +539,51 @@ void sendDeviceStatus(uint8_t num) {
 
   fillSensorData(data);
   doc["timestamp"] = millis();
+  return true;
+}
+
+void broadcastSensorData() {
+  StaticJsonDocument<512> doc;
+  doc["type"] = "sensor_data";
+  JsonObject data = doc.createNestedObject("data");
+  fillSensorData(data);
+  fillMotorData(data);
+  doc["timestamp"] = millis();
 
   String output;
   serializeJson(doc, output);
-  broker.publish(topicStatus.c_str(), output.c_str(), true);
+
+  if (apModeRuntime) {
+    broker.publish(topicTelemetry.c_str(), output.c_str());
+  } else if (bleTelChar) {
+    notifyBle(bleTelChar, output);
+  }
+}
+
+void sendSensorData(uint8_t num) {
+  (void)num;
+  StaticJsonDocument<512> doc;
+  doc["type"] = "sensor_data";
+  JsonObject data = doc.createNestedObject("data");
+  fillSensorData(data);
+  fillMotorData(data);
+  doc["timestamp"] = millis();
+  broadcastResponse(doc);
+}
+
+void sendDeviceStatus(uint8_t num) {
+  (void)num;
+  StaticJsonDocument<768> doc;
+  buildDeviceStatusJson(doc);
+
+  String output;
+  serializeJson(doc, output);
+
+  if (apModeRuntime) {
+    broker.publish(topicStatus.c_str(), output.c_str(), 0, true);
+  } else if (bleStaChar) {
+    notifyBle(bleStaChar, output);
+  }
 }
 
 void sendFeedingComplete() {
@@ -654,6 +595,7 @@ void sendFeedingComplete() {
   data["motorState"] = motorStateLabel(motor.state);
   doc["timestamp"]   = millis();
   broadcastResponse(doc);
+  notifyBle(bleFeedlogChar, pendingResponse);
 }
 
 void sendJamClearComplete() {
@@ -667,7 +609,7 @@ void sendJamClearComplete() {
   broadcastResponse(doc);
 }
 
-void sendError(uint8_t num, const String& errorMessage) {
+void sendError(uint8_t num, const String &errorMessage) {
   (void)num;
   StaticJsonDocument<256> doc;
   doc["type"]              = "error";
@@ -687,11 +629,241 @@ void handlePing(uint8_t num) {
   broadcastResponse(doc);
 }
 
-// ============================================================
-//  MQTT Command Handler
-// ============================================================
+static void resetScheduleChunkState() {
+  schChunkLen = 0;
+  schChunkExpectTotal = 0;
+}
 
-void handleMQTTMessage(const String& message) {
+static bool parseBleSchedulesPayload() {
+  if (schChunkLen >= sizeof(schChunkBuf)) return false;
+  schChunkBuf[schChunkLen] = '\0';
+
+  StaticJsonDocument<4096> doc;
+  DeserializationError err = deserializeJson(doc, schChunkBuf);
+  if (err) return false;
+
+  JsonArray arr;
+  if (doc.is<JsonArray>()) {
+    arr = doc.as<JsonArray>();
+  } else if (doc.containsKey("schedules")) {
+    arr = doc["schedules"].as<JsonArray>();
+  } else if (doc.containsKey("parameters") && doc["parameters"]["schedules"].is<JsonArray>()) {
+    arr = doc["parameters"]["schedules"].as<JsonArray>();
+  } else {
+    return false;
+  }
+
+  applyScheduleArray(arr);
+  return true;
+}
+
+static void onBleScheduleWrite(const std::string &raw) {
+  size_t len = raw.size();
+  if (len < 4) return;
+
+  const uint8_t *d = reinterpret_cast<const uint8_t *>(raw.data());
+  uint16_t idx   = (uint16_t)d[0] | ((uint16_t)d[1] << 8);
+  uint16_t total = (uint16_t)d[2] | ((uint16_t)d[3] << 8);
+  size_t payloadLen = len - 4;
+
+  if (total == 0 || idx >= total) {
+    resetScheduleChunkState();
+    return;
+  }
+
+  if (idx == 0) {
+    schChunkLen = 0;
+    schChunkExpectTotal = total;
+  }
+
+  if (schChunkExpectTotal != total) {
+    resetScheduleChunkState();
+    return;
+  }
+
+  if (schChunkLen + payloadLen > sizeof(schChunkBuf)) {
+    resetScheduleChunkState();
+    StaticJsonDocument<192> errDoc;
+    errDoc["type"] = "error";
+    errDoc["data"]["message"] = "schedule_chunk_overflow";
+    errDoc["timestamp"] = millis();
+    broadcastResponse(errDoc);
+    return;
+  }
+
+  memcpy(schChunkBuf + schChunkLen, d + 4, payloadLen);
+  schChunkLen += payloadLen;
+
+  if (idx == total - 1) {
+    bool ok = parseBleSchedulesPayload();
+    resetScheduleChunkState();
+
+    StaticJsonDocument<256> rsp;
+    rsp["type"] = "control_response";
+    rsp["data"]["action"] = ok ? "set_schedules" : "set_schedules_error";
+    rsp["data"]["success"] = ok;
+    rsp["timestamp"] = millis();
+    broadcastResponse(rsp);
+  }
+}
+
+static void onBleConfigWrite(const std::string &raw) {
+  StaticJsonDocument<768> doc;
+  DeserializationError error = deserializeJson(doc, raw.c_str());
+  if (error) return;
+
+  if (doc.containsKey("cylinderRadius"))      cfg.cylinderRadius      = doc["cylinderRadius"];
+  if (doc.containsKey("cylinderHeight"))      cfg.cylinderHeight      = doc["cylinderHeight"];
+  if (doc.containsKey("frustumTopRadius"))    cfg.frustumTopRadius    = doc["frustumTopRadius"];
+  if (doc.containsKey("frustumBottomRadius")) cfg.frustumBottomRadius = doc["frustumBottomRadius"];
+  if (doc.containsKey("frustumHeight"))       cfg.frustumHeight       = doc["frustumHeight"];
+  if (doc.containsKey("sensorInterval")) {
+    cfg.sensorInterval = constrain(
+      doc["sensorInterval"].as<unsigned long>(),
+      (unsigned long)MIN_SENSOR_INTERVAL,
+      (unsigned long)MAX_SENSOR_INTERVAL
+    );
+  }
+
+  totalVolumeCm3 = computeTotalVolume();
+  saveConfig();
+
+  StaticJsonDocument<256> rsp;
+  rsp["type"] = "control_response";
+  rsp["data"]["action"] = "set_config";
+  rsp["data"]["success"] = true;
+  rsp["timestamp"] = millis();
+  broadcastResponse(rsp);
+}
+
+static void onBleTimeWrite(const std::string &raw) {
+  if (raw.size() < 4) return;
+
+  uint32_t unixTs = (uint32_t)(uint8_t)raw[0]
+                  | ((uint32_t)(uint8_t)raw[1] << 8)
+                  | ((uint32_t)(uint8_t)raw[2] << 16)
+                  | ((uint32_t)(uint8_t)raw[3] << 24);
+
+  if (unixTs < TIME_SYNC_MIN_EPOCH) return;
+
+  struct timeval tv;
+  tv.tv_sec = (time_t)unixTs;
+  tv.tv_usec = 0;
+  settimeofday(&tv, nullptr);
+  Serial.printf("Time sync: %lu\n", (unsigned long)unixTs);
+}
+
+class FloydBLEServerCallbacks : public NimBLEServerCallbacks {
+  void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int reason) override {
+    (void)pServer;
+    (void)connInfo;
+    (void)reason;
+    resetScheduleChunkState();
+  }
+};
+
+class BleCommandCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override {
+    (void)connInfo;
+    pendingCommandPayload = String(pCharacteristic->getValue().c_str());
+    pendingCommand = true;
+  }
+};
+
+class BleScheduleCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override {
+    (void)connInfo;
+    onBleScheduleWrite(pCharacteristic->getValue());
+  }
+
+  void onRead(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override {
+    (void)connInfo;
+    StaticJsonDocument<4096> doc;
+    DeserializationError emptyOk = deserializeJson(doc, "[]");
+    if (emptyOk) return;
+    JsonArray arr = doc.as<JsonArray>();
+
+    for (uint8_t i = 0; i < scheduleStore.count; i++) {
+      FeedSchedule &sch = scheduleStore.schedules[i];
+      JsonObject obj = arr.createNestedObject();
+      obj["id"] = sch.id;
+      obj["label"] = sch.label;
+      obj["time"] = sch.time;
+      obj["daysOfWeek"] = sch.daysOfWeek;
+      obj["augerSpeed"] = sch.augerSpeed;
+      obj["impellerSpeed"] = sch.impellerSpeed;
+      obj["preSpinMs"] = sch.preSpinMs;
+      obj["feedMs"] = sch.feedMs;
+      obj["postSpinMs"] = sch.postSpinMs;
+      obj["enabled"] = sch.enabled;
+    }
+
+    String out;
+    serializeJson(doc, out);
+    pCharacteristic->setValue(out.c_str());
+  }
+};
+
+class BleConfigCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override {
+    (void)connInfo;
+    onBleConfigWrite(pCharacteristic->getValue());
+  }
+
+  void onRead(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override {
+    (void)connInfo;
+    StaticJsonDocument<768> doc;
+    doc["cylinderRadius"]      = cfg.cylinderRadius;
+    doc["cylinderHeight"]      = cfg.cylinderHeight;
+    doc["frustumTopRadius"]    = cfg.frustumTopRadius;
+    doc["frustumBottomRadius"] = cfg.frustumBottomRadius;
+    doc["frustumHeight"]       = cfg.frustumHeight;
+    doc["sensorInterval"]      = cfg.sensorInterval;
+
+    String out;
+    serializeJson(doc, out);
+    pCharacteristic->setValue(out.c_str());
+  }
+};
+
+class BleStatusCallbacks : public NimBLECharacteristicCallbacks {
+  void onRead(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override {
+    (void)connInfo;
+    StaticJsonDocument<768> doc;
+    buildDeviceStatusJson(doc);
+    String out;
+    serializeJson(doc, out);
+    pCharacteristic->setValue(out.c_str());
+  }
+};
+
+class BleTimeCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic *pCharacteristic, NimBLEConnInfo &connInfo) override {
+    (void)connInfo;
+    onBleTimeWrite(pCharacteristic->getValue());
+  }
+};
+
+void publishModeRestartResponse(const char *actionTag, bool success, const char *extraKey, const char *extraVal) {
+  StaticJsonDocument<256> rsp;
+  rsp["type"] = "control_response";
+  rsp["data"]["action"] = actionTag;
+  rsp["data"]["success"] = success;
+  if (extraKey) rsp["data"][extraKey] = extraVal;
+  rsp["timestamp"] = millis();
+  broadcastResponse(rsp);
+  flushPendingResponseTransport();
+}
+
+void restartApMode(bool apModeOn) {
+  prefs.begin(PREFS_NAMESPACE, false);
+  prefs.putBool(PREFS_KEY_APMODE, apModeOn);
+  prefs.end();
+  delay(300);
+  ESP.restart();
+}
+
+void handleMQTTMessage(const String &message) {
   StaticJsonDocument<512> doc;
   DeserializationError error = deserializeJson(doc, message);
 
@@ -794,7 +966,7 @@ void handleMQTTMessage(const String& message) {
     JsonArray arr = rsp.createNestedArray("data");
 
     for (uint8_t i = 0; i < scheduleStore.count; i++) {
-      FeedSchedule& sch = scheduleStore.schedules[i];
+      FeedSchedule &sch = scheduleStore.schedules[i];
       JsonObject obj = arr.createNestedObject();
       obj["id"] = sch.id;
       obj["label"] = sch.label;
@@ -812,25 +984,7 @@ void handleMQTTMessage(const String& message) {
 
   } else if (action == "set_schedules") {
     JsonArray arr = doc["parameters"]["schedules"];
-    scheduleStore.count = min((uint8_t)arr.size(), (uint8_t)MAX_SCHEDULES);
-
-    for (uint8_t i = 0; i < scheduleStore.count; i++) {
-      JsonObject obj = arr[i];
-      FeedSchedule& sch = scheduleStore.schedules[i];
-      strncpy(sch.id, obj["id"] | "", 12);
-      strncpy(sch.label, obj["label"] | "Feed", 32);
-      strncpy(sch.time, obj["time"] | "08:00", 5);
-      strncpy(sch.daysOfWeek, obj["daysOfWeek"] | "0,1,2,3,4,5,6", 13);
-      sch.augerSpeed = obj["augerSpeed"] | 768;
-      sch.impellerSpeed = obj["impellerSpeed"] | 1023;
-      sch.preSpinMs = obj["preSpinMs"] | 1500;
-      sch.feedMs = obj["feedMs"] | 3000;
-      sch.postSpinMs = obj["postSpinMs"] | 1500;
-      sch.enabled = obj["enabled"] | true;
-      sch.lastFired = 0;
-    }
-
-    saveSchedules();
+    applyScheduleArray(arr);
 
     StaticJsonDocument<256> rsp;
     rsp["type"] = "control_response";
@@ -839,43 +993,91 @@ void handleMQTTMessage(const String& message) {
     rsp["timestamp"] = millis();
     broadcastResponse(rsp);
 
+  } else if (action == "switch_mode") {
+    String mode = doc["parameters"]["mode"] | "";
+    mode.toLowerCase();
+
+    if (mode == "ap") {
+      publishModeRestartResponse("switch_mode", true, "mode", "ap");
+      restartApMode(true);
+    } else if (mode == "ble") {
+      publishModeRestartResponse("switch_mode", true, "mode", "ble");
+      restartApMode(false);
+    } else {
+      sendError(0, "switch_mode: unknown mode");
+    }
+
   } else if (action == "restart_provisioning") {
-    StaticJsonDocument<256> rsp;
-    rsp["type"]              = "control_response";
-    rsp["data"]["action"]    = "restart_provisioning";
-    rsp["data"]["success"]   = true;
-    rsp["timestamp"]         = millis();
-    broadcastResponse(rsp);
-
-    // Flush pending response before wiping NVS
-    String output;
-    serializeJson(rsp, output);
-    broker.publish(topicResponse.c_str(), output.c_str());
-    delay(200);
-
-    // Clear NVS; next boot has no STA credentials (hotspot-only, no WiFiManager portal)
-    prefs.begin(PREFS_NAMESPACE, false);
-    prefs.clear();
-    prefs.end();
-    Serial.println("Provisioning reset. Rebooting to AP mode...");
-    delay(500);
-    ESP.restart();
+    publishModeRestartResponse("restart_provisioning", true, nullptr, nullptr);
+    restartApMode(true);
 
   } else {
     sendError(0, "Unknown action: " + action);
   }
 }
 
-// ============================================================
-//  Setup
-// ============================================================
+void initBleStack(const String &deviceName) {
+  NimBLEDevice::init(deviceName.c_str());
+
+  FloydBLEServerCallbacks *srvCb = new FloydBLEServerCallbacks();
+  NimBLEServer *pServer = NimBLEDevice::createServer();
+  pServer->setCallbacks(srvCb);
+
+  NimBLEService *pService = pServer->createService(BLEUUID(BLE_UUID_SERVICE));
+
+  NimBLECharacteristic *pCmd = pService->createCharacteristic(
+                                 BLE_UUID_COMMAND,
+                                 NIMBLE_PROPERTY::WRITE);
+  pCmd->setCallbacks(new BleCommandCallbacks());
+
+  bleRspChar = pService->createCharacteristic(
+                 BLE_UUID_RESPONSE,
+                 NIMBLE_PROPERTY::NOTIFY);
+
+  bleTelChar = pService->createCharacteristic(
+                 BLE_UUID_TELEMETRY,
+                 NIMBLE_PROPERTY::NOTIFY);
+
+  bleStaChar = pService->createCharacteristic(
+                 BLE_UUID_STATUS,
+                 NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  bleStaChar->setCallbacks(new BleStatusCallbacks());
+
+  NimBLECharacteristic *pSch = pService->createCharacteristic(
+                               BLE_UUID_SCHEDULES,
+                               NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+  pSch->setCallbacks(new BleScheduleCallbacks());
+
+  NimBLECharacteristic *pCfg = pService->createCharacteristic(
+                               BLE_UUID_CONFIG,
+                               NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::WRITE);
+  pCfg->setCallbacks(new BleConfigCallbacks());
+
+  NimBLECharacteristic *pTime = pService->createCharacteristic(
+                                BLE_UUID_TIME,
+                                NIMBLE_PROPERTY::WRITE);
+  pTime->setCallbacks(new BleTimeCallbacks());
+
+  bleFeedlogChar = pService->createCharacteristic(
+                     BLE_UUID_FEEDLOG,
+                     NIMBLE_PROPERTY::NOTIFY);
+
+  pService->start();
+
+  NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+  pAdvertising->setName(deviceName.c_str());
+  pAdvertising->addServiceUUID(BLEUUID(BLE_UUID_SERVICE));
+  pAdvertising->enableScanResponse(true);
+  NimBLEDevice::startAdvertising();
+
+  Serial.println("NimBLE advertising as " + deviceName);
+}
 
 void setup() {
   Serial.begin(115200);
   delay(100);
 
-  Serial.println("\n=== Floyd Fish Feeder v2.1 — L298N Motor Driver (ESP32) ===");
-  Serial.println("Pins: Auger (14/12/13)  Impeller (0/15/16)");
+  Serial.println("\n=== Floyd Fish Feeder v2.2 — BLE + SoftAP/MQTT fallback ===");
   Serial.println("========================================\n");
 
   initMotorPins();
@@ -885,73 +1087,51 @@ void setup() {
   loadSchedules();
   totalVolumeCm3 = computeTotalVolume();
 
-  const bool hasStaCredentials = cfg.provisioned && cfg.wifiSSID[0] != '\0';
+  prefs.begin(PREFS_NAMESPACE, false);
+  bool apModePref = prefs.getBool(PREFS_KEY_APMODE, false);
+  prefs.end();
 
-  if (hasStaCredentials) {
-    connectToWiFi();
-  } else {
-    Serial.println("No home WiFi credentials — hotspot-only (no captive portal).");
-    Serial.println("Connect your phone to FloydFeeder-" + deviceChipId + " then use app Direct AP.");
-  }
+  apModeRuntime = apModePref;
 
-  // SoftAP: always on so a phone can connect directly. Use AP-only when no STA to
-  // avoid dual-radio contention and improve phone association reliability.
-  // MUST set WiFi mode BEFORE broker.init() — the broker's internal WiFiServer
-  // requires WiFi to be initialized, otherwise it creates a NULL semaphore → crash.
-  String apName = "FloydFeeder-" + deviceChipId;
-  if (WiFi.status() == WL_CONNECTED) {
-    WiFi.mode(WIFI_AP_STA);
-  } else {
+  String deviceName = "FloydFeeder-" + deviceChipId;
+
+  if (apModeRuntime) {
     WiFi.mode(WIFI_AP);
-  }
-  WiFi.softAP(apName.c_str());
-  Serial.println("SoftAP started: " + apName + " (IP: " + WiFi.softAPIP().toString() + ")");
-  Serial.println("Direct: WiFi " + apName + " -> MQTT mqtt://192.168.4.1:1883");
+    WiFi.softAP(deviceName.c_str());
+    Serial.println("SoftAP: " + deviceName + " IP " + WiFi.softAPIP().toString());
 
-  // mDNS when STA has an IP (home LAN discovery). Skipped in hotspot-only mode.
-  if (WiFi.status() == WL_CONNECTED) {
-    bool mdnsOk = MDNS.begin(("floyd-feeder-" + deviceChipId).c_str());
-    if (mdnsOk) {
-      MDNS.addService("mqtt", "tcp", 1883);
-      Serial.println("mDNS started: floyd-feeder-" + deviceChipId + ".local");
-    } else {
-      Serial.println("WARNING: mDNS failed to start");
-    }
+    broker.init(1883);
+    Serial.println("MQTT broker on :1883");
+
+    lastMqttRx = millis();
   } else {
-    Serial.println("mDNS skipped (STA not connected — use Direct AP + 192.168.4.1)");
+    WiFi.mode(WIFI_OFF);
+    initBleStack(deviceName);
   }
 
-  // Start embedded MQTT broker on port 1883
-  // WiFi must already be in AP / AP_STA mode before this call.
-  broker.init(1883);
-  Serial.println("MQTT broker started on port 1883");
-
-  Serial.println("Setup complete. Ready for local MQTT.");
+  Serial.println("Setup complete.");
   Serial.println("Device ID:    " + deviceChipId);
-  Serial.println("MQTT ID:      " + mqttClientId);
+  Serial.println("Mode:         " + String(apModeRuntime ? "AP+MQTT" : "BLE"));
   Serial.println("Total volume: " + String(totalVolumeCm3) + " cm3");
 }
-
-// ============================================================
-//  Loop
-// ============================================================
 
 void loop() {
   yield();
 
-  // mDNS handles itself internally on ESP32 (no update() needed)
+  if (apModeRuntime) {
+    broker.update();
 
-  static unsigned long lastNtpUpdate = 0;
-  if (millis() - lastNtpUpdate > 60000) {  // resync every 60s
-    lastNtpUpdate = millis();
-    syncNTP();
+    if (elapsedSince(lastMqttRx) > 60000UL) {
+      Serial.println("MQTT idle timeout → BLE mode");
+      prefs.begin(PREFS_NAMESPACE, false);
+      prefs.putBool(PREFS_KEY_APMODE, false);
+      prefs.end();
+      delay(200);
+      ESP.restart();
+    }
   }
 
   checkSchedules();
-
-  checkWiFiConnection();
-
-  broker.update();
 
   if (pendingCommand) {
     pendingCommand = false;
@@ -959,10 +1139,7 @@ void loop() {
     pendingCommandPayload = "";
   }
 
-  if (pendingResponse.length() > 0) {
-    broker.publish(topicResponse.c_str(), pendingResponse.c_str());
-    pendingResponse = "";
-  }
+  flushPendingResponseTransport();
 
   updateMotorState();
 

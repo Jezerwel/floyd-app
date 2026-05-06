@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, {
 	createContext,
-	ReactNode,
+	type ReactNode,
 	useCallback,
 	useContext,
 	useEffect,
@@ -9,8 +9,11 @@ import React, {
 	useRef,
 	useState,
 } from "react";
-import { useMDNS } from "./useMDNS";
-import useMQTT, { MQTTMessage } from "./useMQTT";
+import { AppState } from "react-native";
+import { useBLEDiscovery } from "./useBLEDiscovery";
+import { useBLETransport } from "./useBLETransport";
+import useMQTT, { type MQTTMessage } from "./useMQTT";
+import type { ActiveTransport, DiscoveredFeederBle, FeederLinkPhase } from "./transportTypes";
 
 interface FeederConfig {
 	cylinderRadius: number;
@@ -71,7 +74,7 @@ interface FeedParams {
 	postSpinMs: number;
 }
 
-interface ESP32ContextType {
+export interface ESP32ContextType {
 	isConnected: boolean;
 	isConnecting: boolean;
 	error: string | null;
@@ -79,8 +82,8 @@ interface ESP32ContextType {
 	deviceData: ESP32Data;
 	chipId: string | null;
 	setChipId: (chipId: string | null) => void;
-	connectionMode: "auto" | "direct-ap";
-	setConnectionMode: (mode: "auto" | "direct-ap") => void;
+	activeTransport: ActiveTransport;
+	feederLinkPhase: FeederLinkPhase;
 	connect: () => void;
 	disconnect: () => void;
 	resetConnection: () => void;
@@ -98,6 +101,16 @@ interface ESP32ContextType {
 	feedLogs: FeedLogEntry[];
 	setFeedLogs: (logs: FeedLogEntry[]) => void;
 	publishScheduleSync: (schedules: Schedule[]) => boolean;
+	bleDevices: DiscoveredFeederBle[];
+	isBleScanning: boolean;
+	bleDiscoveryError: string | null;
+	bleRssi: number | null;
+	startBleScan: () => void;
+	stopBleScan: () => void;
+	clearBleDiscovered: () => void;
+	connectBleDevice: (deviceId: string, feederChipId: string) => void;
+	beginApWifiFallback: () => Promise<void>;
+	connectMqttToSoftAp: () => void;
 }
 
 const ESP32Context = createContext<ESP32ContextType | null>(null);
@@ -114,9 +127,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 	initialChipId = null,
 }) => {
 	const [chipId, setChipIdState] = useState<string | null>(initialChipId);
-	const [connectionMode, setConnectionModeState] = useState<
-		"auto" | "direct-ap"
-	>("direct-ap");
+	const [feederLinkPhase, setFeederLinkPhase] =
+		useState<FeederLinkPhase>("ble");
 	const [deviceData, setDeviceData] = useState<ESP32Data>({});
 	const [isAutoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 	const [autoRefreshInterval, setAutoRefreshInterval] = useState(
@@ -125,10 +137,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 	const [feedLogs, setFeedLogsState] = useState<FeedLogEntry[]>([]);
 	const feedLogJournalRef = useRef<FeedLogEntry[]>([]);
 
-	// Debounced AsyncStorage flush for feed logs
-	const persistFeedLogsRef = useRef(() => {
-		// noop — assigned below after setFeedLogsState
-	});
+	const persistFeedLogsRef = useRef(() => {});
 	persistFeedLogsRef.current = () => {
 		const logs = feedLogJournalRef.current;
 		if (logs.length > 0) {
@@ -138,33 +147,19 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 		}
 	};
 
-	// Sync journal ref when feedLogs state updates
 	useEffect(() => {
 		feedLogJournalRef.current = feedLogs;
 	}, [feedLogs]);
 
-	// Load persisted connection mode
-	useEffect(() => {
-		AsyncStorage.getItem("floydConnectionMode")
-			.then((val) => {
-				if (val === "auto" || val === "direct-ap") {
-					setConnectionModeState(val);
-				}
-			})
-			.catch(() => {});
-	}, []);
-
-	const setConnectionMode = useCallback((mode: "auto" | "direct-ap") => {
-		setConnectionModeState(mode);
-		AsyncStorage.setItem("floydConnectionMode", mode).catch(console.error);
-	}, []);
-
+	const bleDiscovery = useBLEDiscovery();
 	const {
-		discoveredFeeder,
-		isScanning: _isMdnsScanning,
-		startScan,
-		stopScan: _stopScan,
-	} = useMDNS(connectionMode === "auto" ? chipId : null);
+		devices: bleDevices,
+		isScanning: isBleScanning,
+		error: bleDiscoveryError,
+		startScan: startBleScan,
+		stopScan: stopBleScan,
+		clearDiscovered: clearBleDiscovered,
+	} = bleDiscovery;
 
 	const handleMessage = useCallback((message: MQTTMessage) => {
 		switch (message.type) {
@@ -203,7 +198,6 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 					esp32Connected: true,
 				}));
 
-				// Accumulate feed log on feed_complete
 				if (message.data.action === "feed_complete") {
 					const newEntry: FeedLogEntry = {
 						id: Date.now().toString(36),
@@ -241,70 +235,162 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 				break;
 			}
 			case "error":
-				console.error("MQTT device error:", message.data);
+				console.error("Device error:", message.data);
 				break;
 		}
 	}, []);
 
+	const onChipIdDiscovered = useCallback((discoveredId: string) => {
+		setChipIdState(discoveredId);
+		AsyncStorage.setItem("floydChipId", discoveredId).catch(console.error);
+	}, []);
+
+	const ble = useBLETransport({ onMessage: handleMessage });
+
 	const {
-		isConnected,
-		isConnecting,
-		error,
+		isConnected: mqttConnected,
+		isConnecting: mqttConnecting,
+		error: mqttError,
 		connectionAttempts,
 		connect: mqttConnect,
 		disconnect: mqttDisconnect,
 		publish,
-		resetConnection,
-	} = useMQTT(chipId, { onMessage: handleMessage });
+		resetConnection: mqttResetConnection,
+	} = useMQTT(chipId, { onMessage: handleMessage, onChipIdDiscovered });
 
-	// Auto-connect based on current mode
+	const activeTransport: ActiveTransport =
+		feederLinkPhase === "wifi_mqtt" ||
+		(feederLinkPhase === "wifi_instructions" && mqttConnected)
+			? "mqtt"
+			: "ble";
+
+	const isConnected =
+		feederLinkPhase === "wifi_mqtt" || feederLinkPhase === "wifi_instructions"
+			? mqttConnected
+			: ble.isConnected;
+
+	const isConnecting =
+		feederLinkPhase === "wifi_mqtt" || feederLinkPhase === "wifi_instructions"
+			? mqttConnecting
+			: ble.isConnecting;
+
+	const error =
+		feederLinkPhase === "wifi_mqtt" || feederLinkPhase === "wifi_instructions"
+			? mqttError ?? ble.error
+			: ble.error ?? mqttError;
+
 	useEffect(() => {
-		if (!chipId) return;
-
-		if (connectionMode === "direct-ap") {
-			// Skip mDNS — connect directly to ESP32's SoftAP gateway
-			mqttConnect("mqtt://192.168.4.1:1883", chipId);
-		} else {
-			startScan();
+		if (feederLinkPhase === "wifi_instructions" && mqttConnected) {
+			setFeederLinkPhase("wifi_mqtt");
 		}
+	}, [feederLinkPhase, mqttConnected]);
 
+	useEffect(() => {
+		if (!ble.isConnected || feederLinkPhase !== "ble") return;
+		const ts = Math.floor(Date.now() / 1000);
+		void ble.syncTime(ts);
+	}, [ble.isConnected, feederLinkPhase, ble.syncTime]);
+
+	useEffect(() => {
+		const sub = AppState.addEventListener("change", (s) => {
+			if (
+				s === "active" &&
+				feederLinkPhase === "ble" &&
+				ble.isConnected
+			) {
+				void ble.syncTime(Math.floor(Date.now() / 1000));
+			}
+		});
+		return () => sub.remove();
+	}, [feederLinkPhase, ble.isConnected, ble.syncTime]);
+
+	useEffect(() => {
+		if (feederLinkPhase !== "ble" || !chipId) return;
+		if (ble.isConnected || ble.isConnecting) return;
+		const match = bleDevices.find(
+			(d) => d.chipId.toUpperCase() === chipId.toUpperCase(),
+		);
+		if (match) {
+			void ble.connect(match.deviceId);
+			void stopBleScan();
+		}
+	}, [
+		feederLinkPhase,
+		chipId,
+		bleDevices,
+		ble.isConnected,
+		ble.isConnecting,
+		ble.connect,
+		stopBleScan,
+	]);
+
+	useEffect(() => {
+		if (feederLinkPhase !== "ble") return;
+		if (ble.isConnected || ble.isConnecting) return;
+		void startBleScan();
 		return () => {
-			// cleanup handled by hooks
+			void stopBleScan();
 		};
-	}, [chipId, connectionMode, startScan]);
-
-	// When feeder is discovered via mDNS (auto mode), connect MQTT
-	useEffect(() => {
-		if (discoveredFeeder && chipId && connectionMode === "auto") {
-			const brokerUrl = `mqtt://${discoveredFeeder.host}:${discoveredFeeder.port}`;
-			mqttConnect(brokerUrl, chipId);
-		}
-	}, [discoveredFeeder, chipId, mqttConnect]);
+	}, [
+		feederLinkPhase,
+		ble.isConnected,
+		ble.isConnecting,
+		startBleScan,
+		stopBleScan,
+	]);
 
 	const setChipId = useCallback(
 		(nextChipId: string | null) => {
 			setChipIdState(nextChipId);
-
 			if (nextChipId) {
 				AsyncStorage.setItem("floydChipId", nextChipId).catch(console.error);
 				return;
 			}
-
 			AsyncStorage.removeItem("floydChipId").catch(console.error);
+			void ble.disconnect();
 			mqttDisconnect();
+			setFeederLinkPhase("ble");
+			clearBleDiscovered();
 		},
-		[mqttDisconnect],
+		[ble.disconnect, mqttDisconnect, clearBleDiscovered],
+	);
+
+	const connectBleDevice = useCallback(
+		(deviceId: string, feederChipId: string) => {
+			setChipIdState(feederChipId);
+			AsyncStorage.setItem("floydChipId", feederChipId).catch(console.error);
+			setFeederLinkPhase("ble");
+			void stopBleScan();
+			void ble.connect(deviceId);
+		},
+		[ble.connect, stopBleScan],
 	);
 
 	const publishCommand = useCallback(
 		(action: string, parameters?: object): boolean => {
-			return publish("command", {
-				action,
-				parameters,
-				timestamp: Date.now(),
-			});
+			const payload = { action, parameters, timestamp: Date.now() };
+			if (
+				(feederLinkPhase === "wifi_mqtt" ||
+					feederLinkPhase === "wifi_instructions") &&
+				mqttConnected &&
+				chipId
+			) {
+				return publish("command", payload);
+			}
+			if (ble.isConnected) {
+				void ble.writeCommandPayload(payload);
+				return true;
+			}
+			return false;
 		},
-		[publish],
+		[
+			feederLinkPhase,
+			mqttConnected,
+			chipId,
+			publish,
+			ble.isConnected,
+			ble.writeCommandPayload,
+		],
 	);
 
 	const requestSensorData = useCallback((): boolean => {
@@ -343,18 +429,48 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 	);
 
 	const connect = useCallback(() => {
-		if (!chipId) return;
-
-		if (connectionMode === "direct-ap") {
-			mqttConnect("mqtt://192.168.4.1:1883", chipId);
-		} else {
-			startScan();
+		if (feederLinkPhase === "wifi_instructions" || feederLinkPhase === "wifi_mqtt") {
+			mqttConnect("mqtt://192.168.4.1:1883", chipId ?? undefined);
+			return;
 		}
-	}, [chipId, connectionMode, startScan, mqttConnect]);
+		void startBleScan();
+	}, [feederLinkPhase, chipId, mqttConnect, startBleScan]);
 
 	const disconnect = useCallback(() => {
+		if (feederLinkPhase === "wifi_mqtt" || feederLinkPhase === "wifi_instructions") {
+			if (mqttConnected && chipId) {
+				publish("command", {
+					action: "switch_mode",
+					parameters: { mode: "ble" },
+					timestamp: Date.now(),
+				});
+			}
+			mqttDisconnect();
+			setFeederLinkPhase("ble");
+			return;
+		}
+		void ble.disconnect();
+	}, [
+		feederLinkPhase,
+		mqttConnected,
+		chipId,
+		publish,
+		mqttDisconnect,
+		ble.disconnect,
+	]);
+
+	const resetConnection = useCallback(() => {
+		if (
+			feederLinkPhase === "wifi_mqtt" ||
+			feederLinkPhase === "wifi_instructions"
+		) {
+			mqttResetConnection();
+			return;
+		}
 		mqttDisconnect();
-	}, [mqttDisconnect]);
+		void ble.disconnect();
+		void startBleScan();
+	}, [feederLinkPhase, mqttResetConnection, ble.disconnect, startBleScan]);
 
 	const setFeedLogs = useCallback((logs: FeedLogEntry[]) => {
 		setFeedLogsState(logs);
@@ -365,14 +481,43 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
 	const publishScheduleSync = useCallback(
 		(schedules: Schedule[]): boolean => {
-			return publish("command", {
-				action: "set_schedules",
-				parameters: { schedules },
-				timestamp: Date.now(),
-			});
+			if (
+				(feederLinkPhase === "wifi_mqtt" ||
+					feederLinkPhase === "wifi_instructions") &&
+				mqttConnected &&
+				chipId
+			) {
+				return publish("command", {
+					action: "set_schedules",
+					parameters: { schedules },
+					timestamp: Date.now(),
+				});
+			}
+			if (ble.isConnected) {
+				void ble.writeSchedulesChunked(schedules as unknown[]);
+				return true;
+			}
+			return false;
 		},
-		[publish],
+		[
+			feederLinkPhase,
+			mqttConnected,
+			chipId,
+			publish,
+			ble.isConnected,
+			ble.writeSchedulesChunked,
+		],
 	);
+
+	const beginApWifiFallback = useCallback(async () => {
+		if (!ble.isConnected) return;
+		await ble.switchToAp();
+		setFeederLinkPhase("wifi_instructions");
+	}, [ble.isConnected, ble.switchToAp]);
+
+	const connectMqttToSoftAp = useCallback(() => {
+		mqttConnect("mqtt://192.168.4.1:1883", chipId ?? undefined);
+	}, [mqttConnect, chipId]);
 
 	const esp32Status: "connected" | "disconnected" | "unknown" =
 		deviceData.esp32Connected === true
@@ -390,8 +535,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 			deviceData,
 			chipId,
 			setChipId,
-			connectionMode,
-			setConnectionMode,
+			activeTransport,
+			feederLinkPhase,
 			connect,
 			disconnect,
 			resetConnection,
@@ -409,6 +554,16 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 			feedLogs,
 			setFeedLogs,
 			publishScheduleSync,
+			bleDevices,
+			isBleScanning,
+			bleDiscoveryError,
+			bleRssi: ble.bleRssi,
+			startBleScan,
+			stopBleScan,
+			clearBleDiscovered,
+			connectBleDevice,
+			beginApWifiFallback,
+			connectMqttToSoftAp,
 		}),
 		[
 			isConnected,
@@ -418,8 +573,8 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 			deviceData,
 			chipId,
 			setChipId,
-			connectionMode,
-			setConnectionMode,
+			activeTransport,
+			feederLinkPhase,
 			connect,
 			disconnect,
 			resetConnection,
@@ -435,6 +590,16 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 			feedLogs,
 			setFeedLogs,
 			publishScheduleSync,
+			bleDevices,
+			isBleScanning,
+			bleDiscoveryError,
+			ble.bleRssi,
+			startBleScan,
+			stopBleScan,
+			clearBleDiscovered,
+			connectBleDevice,
+			beginApWifiFallback,
+			connectMqttToSoftAp,
 		],
 	);
 
