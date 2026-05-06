@@ -101,15 +101,15 @@ public:
 
 FloydBroker broker;
 
-#define MOTOR_A_ENA    14
-#define MOTOR_A_IN1    12
-#define MOTOR_A_IN2    13
-#define MOTOR_B_ENB    0
-#define MOTOR_B_IN3    15
-#define MOTOR_B_IN4    16
+#define MOTOR_A_ENA    5
+#define MOTOR_A_IN1    1
+#define MOTOR_A_IN2    2
+#define MOTOR_B_ENB    6
+#define MOTOR_B_IN3    3
+#define MOTOR_B_IN4    4
 
-#define LEDC_CH_AUGER     0
-#define LEDC_CH_IMPELLER  1
+#define LEDC_CH_AUGER     6
+#define LEDC_CH_IMPELLER  5
 #define LEDC_FREQ         25000
 #define LEDC_RESOLUTION   10
 
@@ -770,12 +770,20 @@ static void onBleTimeWrite(const std::string &raw) {
   Serial.printf("Time sync: %lu\n", (unsigned long)unixTs);
 }
 
+// Forward declaration for re-advertising after disconnect
+static void restartAdvertising();
+
 class FloydBLEServerCallbacks : public NimBLEServerCallbacks {
   void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int reason) override {
-    (void)pServer;
     (void)connInfo;
     (void)reason;
     resetScheduleChunkState();
+    Serial.printf("BLE client disconnected (reason=%d), restarting advertising...\n", reason);
+    // Restart advertising so the client can reconnect without a full reboot.
+    // NimBLE does NOT auto-advertise after a disconnect by default.
+    pServer->startAdvertising();
+    // For extended advertising (Coded PHY), also restart the ext adv instance.
+    restartAdvertising();
   }
 };
 
@@ -1033,6 +1041,26 @@ void handleMQTTMessage(const String &message) {
   }
 }
 
+// Saved for re-advertising after disconnect
+static NimBLEAdvertising *g_pAdvertising = nullptr;
+#ifdef CONFIG_BT_NIMBLE_EXT_ADV
+static NimBLEExtAdvertising *g_pExtAdvertising = nullptr;
+#endif
+
+static void restartAdvertising() {
+#ifdef CONFIG_BT_NIMBLE_EXT_ADV
+  if (g_pExtAdvertising) {
+    g_pExtAdvertising->start();
+    Serial.println("NimBLE ExtAdvertising restarted");
+  }
+#else
+  if (g_pAdvertising) {
+    g_pAdvertising->start();
+    Serial.println("NimBLE advertising restarted");
+  }
+#endif
+}
+
 void initBleStack(const String &deviceName) {
   NimBLEDevice::init(deviceName.c_str());
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);  // max TX for extended range
@@ -1040,6 +1068,8 @@ void initBleStack(const String &deviceName) {
   FloydBLEServerCallbacks *srvCb = new FloydBLEServerCallbacks();
   NimBLEServer *pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(srvCb);
+  // Auto-restart advertising when a client disconnects
+  pServer->advertiseOnDisconnect(true);
 
   NimBLEService *pService = pServer->createService(BLEUUID(BLE_UUID_SERVICE));
 
@@ -1091,17 +1121,17 @@ void initBleStack(const String &deviceName) {
   extAdvData.addServiceUUID(BLEUUID(BLE_UUID_SERVICE));
   extAdvData.setPrimaryPhy(BLE_HCI_LE_PHY_CODED);
   extAdvData.setSecondaryPhy(BLE_HCI_LE_PHY_CODED);
-  NimBLEExtAdvertising *pExtAdv =
+  g_pExtAdvertising =
       (NimBLEExtAdvertising *)NimBLEDevice::getAdvertising();
-  pExtAdv->setInstanceData(0, extAdvData);
-  pExtAdv->start();
+  g_pExtAdvertising->setInstanceData(0, extAdvData);
+  g_pExtAdvertising->start();
   Serial.println("NimBLE (Coded PHY) advertising as " + deviceName);
 #else
   // BLE 4.2 legacy (original ESP32)
-  NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
-  pAdvertising->setName(deviceName.c_str());
-  pAdvertising->addServiceUUID(BLEUUID(BLE_UUID_SERVICE));
-  pAdvertising->enableScanResponse(true);
+  g_pAdvertising = NimBLEDevice::getAdvertising();
+  g_pAdvertising->setName(deviceName.c_str());
+  g_pAdvertising->addServiceUUID(BLEUUID(BLE_UUID_SERVICE));
+  g_pAdvertising->enableScanResponse(true);
   NimBLEDevice::startAdvertising();
   Serial.println("NimBLE advertising as " + deviceName);
 #endif

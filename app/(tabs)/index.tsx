@@ -7,9 +7,11 @@ import { ConnectionBadge } from "@/components/ui/InlineError";
 import { SkeletonCard, SkeletonStatRow } from "@/components/ui/Skeleton";
 import { StatCard } from "@/components/ui/StatCard";
 import { Colors } from "@/constants/Colors";
+import { LOG_PREVIEW_LIMIT } from "@/constants/logs";
 import useAlerts from "@/hooks/useAlerts";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useESP32 } from "@/hooks/useESP32Context";
+import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import React, { useCallback, useMemo, useState } from "react";
 import {
@@ -55,6 +57,8 @@ export default function DashboardScreen() {
 
   const { alerts, alertCount, hasHighSeverityAlerts, hasMediumSeverityAlerts } =
     useAlerts();
+
+  const alertsPreview = alerts.slice(0, LOG_PREVIEW_LIMIT);
 
   const [isRefreshing, setIsRefreshing] = useState(false);
 
@@ -454,16 +458,45 @@ export default function DashboardScreen() {
         >
           <View style={styles.alertsContainer}>
             {alerts.length > 0 ? (
-              alerts.map((alert) => (
-                <AlertItem
-                  key={alert.id}
-                  type={alert.type}
-                  message={alert.message}
-                  timestamp={alert.timestamp}
-                  severity={alert.severity}
-                  isResolved={alert.isResolved}
-                />
-              ))
+              <>
+                {alertsPreview.map((alert) => (
+                  <AlertItem
+                    key={alert.id}
+                    type={alert.type}
+                    message={alert.message}
+                    timestamp={alert.timestamp}
+                    severity={alert.severity}
+                    isResolved={alert.isResolved}
+                  />
+                ))}
+                {alerts.length > LOG_PREVIEW_LIMIT && (
+                  <TouchableOpacity
+                    style={[
+                      styles.viewMoreAlerts,
+                      { borderColor: colors.border },
+                    ]}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/logs-more",
+                        params: { section: "alerts" },
+                      })
+                    }
+                    accessibilityRole="button"
+                    accessibilityLabel="View all alerts"
+                  >
+                    <Text
+                      style={[styles.viewMoreAlertsText, { color: colors.primary }]}
+                    >
+                      View more
+                    </Text>
+                    <IconSymbol
+                      name="chevron.right"
+                      size={14}
+                      color={colors.primary}
+                    />
+                  </TouchableOpacity>
+                )}
+              </>
             ) : (
               <View style={styles.noAlertsContainer}>
                 <IconSymbol
@@ -631,6 +664,20 @@ const styles = StyleSheet.create({
   },
   alertsContainer: {
     gap: 12,
+  },
+  viewMoreAlerts: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    marginTop: 18,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  viewMoreAlertsText: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   noAlertsContainer: {
     alignItems: "center",

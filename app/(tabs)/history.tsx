@@ -1,11 +1,13 @@
 import { IconSymbol } from "@/components/ui/IconSymbol";
 import { StatCard } from "@/components/ui/StatCard";
 import { Colors } from "@/constants/Colors";
-import useAlerts from "@/hooks/useAlerts";
+import { LOG_PREVIEW_LIMIT, LOG_SENSOR_PREVIEW_LIMIT } from "@/constants/logs";
+import useAlerts, { type Alert } from "@/hooks/useAlerts";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import { useESP32 } from "@/hooks/useESP32Context";
+import { useESP32, type SensorLogEntry } from "@/hooks/useESP32Context";
+import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   ScrollView,
   StyleSheet,
@@ -15,33 +17,39 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-interface SensorLogEntry {
-  id: string;
-  timestamp: Date;
-  temperature?: number;
-  distance?: number;
-  foodLevel?: number;
-  temperatureSensorConnected: boolean;
-  ultrasonicSensorConnected: boolean;
-}
-
-interface FeedLogEntry {
-  id: string;
-  timestamp: string;
-  augerSpeed: number;
-  impellerSpeed: number;
-  feedMs: number;
-  success: boolean;
-  errorMessage?: string;
+function ViewMoreButton({
+  section,
+  colors,
+}: {
+  section: "sensor" | "alerts" | "feeds";
+  colors: (typeof Colors)[keyof typeof Colors];
+}) {
+  return (
+    <TouchableOpacity
+      onPress={() =>
+        router.push({
+          pathname: "/logs-more",
+          params: { section },
+        })
+      }
+      style={[styles.viewMoreBtn, { borderColor: colors.border }]}
+      accessibilityRole="button"
+      accessibilityLabel="View full list"
+    >
+      <Text style={[styles.viewMoreText, { color: colors.primary }]}>
+        View more
+      </Text>
+      <IconSymbol name="chevron.right" size={14} color={colors.primary} />
+    </TouchableOpacity>
+  );
 }
 
 export default function LogsScreen() {
   const colorScheme = useColorScheme();
-  const colors = Colors[colorScheme ?? "light"];
-  const { deviceData, isConnected, feedLogs } = useESP32();
+  const colors = Colors[colorScheme as keyof typeof Colors];
+  const { isConnected, feedLogs, sensorLogs, clearSensorLogs } = useESP32();
   const { alerts } = useAlerts();
 
-  const [sensorLogs, setSensorLogs] = useState<SensorLogEntry[]>([]);
   const [showTemperatureLogs, setShowTemperatureLogs] = useState(true);
   const [showAlertLogs, setShowAlertLogs] = useState(true);
   const [showFeedHistory, setShowFeedHistory] = useState(false);
@@ -50,45 +58,9 @@ export default function LogsScreen() {
     setShowFeedHistory(!showFeedHistory);
   };
 
-  // Log sensor data when it updates (optimized to prevent excessive re-renders)
-  useEffect(() => {
-    if (isConnected && deviceData.lastUpdate) {
-      setSensorLogs((prev) => {
-        // Check if this is actually new data to prevent duplicates
-        const lastEntry = prev[0];
-        if (lastEntry?.timestamp.getTime() === deviceData.lastUpdate) {
-          return prev; // Same timestamp, no change needed
-        }
-
-        const newLogEntry: SensorLogEntry = {
-          id: Date.now().toString(),
-          timestamp: new Date(deviceData.lastUpdate!), // Safe because we check lastUpdate exists above
-          temperature: deviceData.temperature,
-          distance: deviceData.distance,
-          foodLevel: deviceData.foodLevelPercentage,
-          temperatureSensorConnected:
-            deviceData.temperatureSensorConnected ?? false,
-          ultrasonicSensorConnected:
-            deviceData.ultrasonicSensorConnected ?? false,
-        };
-
-        // Keep only last 50 entries to prevent memory issues
-        return [newLogEntry, ...prev].slice(0, 50);
-      });
-    }
-  }, [
-    isConnected,
-    deviceData.lastUpdate,
-    deviceData.temperature,
-    deviceData.distance,
-    deviceData.foodLevelPercentage,
-    deviceData.temperatureSensorConnected,
-    deviceData.ultrasonicSensorConnected,
-  ]);
-
-  const clearLogs = () => {
-    setSensorLogs([]);
-  };
+  const sensorPreview = sensorLogs.slice(0, LOG_SENSOR_PREVIEW_LIMIT);
+  const alertsPreview = alerts.slice(0, LOG_PREVIEW_LIMIT);
+  const feedPreview = feedLogs.slice(0, LOG_PREVIEW_LIMIT);
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString();
@@ -160,7 +132,7 @@ export default function LogsScreen() {
     </View>
   );
 
-  const renderAlertItem = ({ item }: { item: any }) => (
+  const renderAlertItem = ({ item }: { item: Alert }) => (
     <View
       key={item.id}
       style={[
@@ -172,8 +144,8 @@ export default function LogsScreen() {
             item.severity === "HIGH"
               ? colors.error
               : item.severity === "MEDIUM"
-              ? colors.warning
-              : colors.success,
+                ? colors.warning
+                : colors.success,
           borderLeftWidth: 4,
         },
       ]}
@@ -204,7 +176,7 @@ export default function LogsScreen() {
         <Text style={[styles.headerTitle, { color: colors.text }]}>
           Sensor Logs
         </Text>
-        <TouchableOpacity onPress={clearLogs} style={styles.clearButton}>
+        <TouchableOpacity onPress={clearSensorLogs} style={styles.clearButton}>
           <IconSymbol name="trash" size={18} color={colors.error} />
         </TouchableOpacity>
       </View>
@@ -282,7 +254,9 @@ export default function LogsScreen() {
             style={[
               styles.logToggle,
               {
-                backgroundColor: showFeedHistory ? colors.accent : colors.border,
+                backgroundColor: showFeedHistory
+                  ? colors.accent
+                  : colors.border,
               },
             ]}
             onPress={handleFeedHistoryToggle}
@@ -306,9 +280,14 @@ export default function LogsScreen() {
             color={colors.primary}
           >
             {sensorLogs.length > 0 ? (
-              <View style={styles.logList}>
-                {sensorLogs.map((item) => renderSensorLogItem({ item }))}
-              </View>
+              <>
+                <View style={styles.logList}>
+                  {sensorPreview.map((item) => renderSensorLogItem({ item }))}
+                </View>
+                {sensorLogs.length > LOG_SENSOR_PREVIEW_LIMIT && (
+                  <ViewMoreButton section="sensor" colors={colors} />
+                )}
+              </>
             ) : (
               <View style={styles.emptyState}>
                 <IconSymbol name="circle" size={32} color={colors.muted} />
@@ -331,9 +310,14 @@ export default function LogsScreen() {
             color={colors.secondary}
           >
             {alerts.length > 0 ? (
-              <View style={styles.logList}>
-                {alerts.map((item) => renderAlertItem({ item }))}
-              </View>
+              <>
+                <View style={styles.logList}>
+                  {alertsPreview.map((item) => renderAlertItem({ item }))}
+                </View>
+                {alerts.length > LOG_PREVIEW_LIMIT && (
+                  <ViewMoreButton section="alerts" colors={colors} />
+                )}
+              </>
             ) : (
               <View style={styles.emptyState}>
                 <IconSymbol
@@ -360,37 +344,55 @@ export default function LogsScreen() {
             color={colors.accent}
           >
             {feedLogs.length > 0 ? (
-              feedLogs.map((log, logIndex) => (
-                <View
-                  key={`${log.id}-${logIndex}`}
-                  style={[styles.logItem, { backgroundColor: colors.card, borderColor: colors.border }]}
-                >
-                  <View style={styles.logHeader}>
-                    <Text style={[styles.logTime, { color: colors.text }]}>
-                      {new Date(log.timestamp).toLocaleString()}
-                    </Text>
-                    <Text style={[styles.logTime, { color: log.success ? colors.success : colors.error }]}>
-                      {log.success ? "OK" : "FAIL"}
-                    </Text>
+              <>
+                {feedPreview.map((log, logIndex) => (
+                  <View
+                    key={`${log.id}-${logIndex}`}
+                    style={[
+                      styles.logItem,
+                      {
+                        backgroundColor: colors.card,
+                        borderColor: colors.border,
+                      },
+                    ]}
+                  >
+                    <View style={styles.logHeader}>
+                      <Text style={[styles.logTime, { color: colors.text }]}>
+                        {new Date(log.timestamp).toLocaleString()}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.logTime,
+                          {
+                            color: log.success ? colors.success : colors.error,
+                          },
+                        ]}
+                      >
+                        {log.success ? "OK" : "FAIL"}
+                      </Text>
+                    </View>
+                    <View style={styles.logContent}>
+                      <Text style={[styles.logValue, { color: colors.text }]}>
+                        {Math.round(log.feedMs / 1000)}s
+                      </Text>
+                      <Text style={[styles.logValue, { color: colors.muted }]}>
+                        Auger: {Math.round(log.augerSpeed / 10.23)}%
+                      </Text>
+                      <Text style={[styles.logValue, { color: colors.muted }]}>
+                        Impeller: {Math.round(log.impellerSpeed / 10.23)}%
+                      </Text>
+                    </View>
+                    {log.errorMessage && (
+                      <Text style={[styles.logValue, { color: colors.error }]}>
+                        {log.errorMessage}
+                      </Text>
+                    )}
                   </View>
-                  <View style={styles.logContent}>
-                    <Text style={[styles.logValue, { color: colors.text }]}>
-                      {Math.round(log.feedMs / 1000)}s
-                    </Text>
-                    <Text style={[styles.logValue, { color: colors.muted }]}>
-                      Auger: {Math.round(log.augerSpeed / 10.23)}%
-                    </Text>
-                    <Text style={[styles.logValue, { color: colors.muted }]}>
-                      Impeller: {Math.round(log.impellerSpeed / 10.23)}%
-                    </Text>
-                  </View>
-                  {log.errorMessage && (
-                    <Text style={[styles.logValue, { color: colors.error }]}>
-                      {log.errorMessage}
-                    </Text>
-                  )}
-                </View>
-              ))
+                ))}
+                {feedLogs.length > LOG_PREVIEW_LIMIT && (
+                  <ViewMoreButton section="feeds" colors={colors} />
+                )}
+              </>
             ) : (
               <View style={styles.emptyState}>
                 <IconSymbol name="clock.fill" size={32} color={colors.muted} />
@@ -469,6 +471,20 @@ const styles = StyleSheet.create({
   },
   logList: {
     maxHeight: 300,
+  },
+  viewMoreBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+    marginTop: 28,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  viewMoreText: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   logItem: {
     padding: 12,
