@@ -1035,6 +1035,7 @@ void handleMQTTMessage(const String &message) {
 
 void initBleStack(const String &deviceName) {
   NimBLEDevice::init(deviceName.c_str());
+  NimBLEDevice::setPower(ESP_PWR_LVL_P9);  // max TX for extended range
 
   FloydBLEServerCallbacks *srvCb = new FloydBLEServerCallbacks();
   NimBLEServer *pServer = NimBLEDevice::createServer();
@@ -1081,13 +1082,29 @@ void initBleStack(const String &deviceName) {
 
   pService->start();
 
+#ifdef CONFIG_BT_NIMBLE_EXT_ADV
+  // BLE 5.0 Coded PHY (ESP32-S3/C3/H2) — ~4× range
+  // Requires: uncomment #define CONFIG_BT_NIMBLE_EXT_ADV 1 in
+  //   <Arduino>/libraries/NimBLE-Arduino/src/nimconfig.h
+  NimBLEExtAdvertisement extAdvData;
+  extAdvData.setName(deviceName.c_str());
+  extAdvData.addServiceUUID(BLEUUID(BLE_UUID_SERVICE));
+  extAdvData.setPrimaryPhy(BLE_HCI_LE_PHY_CODED);
+  extAdvData.setSecondaryPhy(BLE_HCI_LE_PHY_CODED);
+  NimBLEExtAdvertising *pExtAdv =
+      (NimBLEExtAdvertising *)NimBLEDevice::getAdvertising();
+  pExtAdv->setInstanceData(0, extAdvData);
+  pExtAdv->start();
+  Serial.println("NimBLE (Coded PHY) advertising as " + deviceName);
+#else
+  // BLE 4.2 legacy (original ESP32)
   NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
   pAdvertising->setName(deviceName.c_str());
   pAdvertising->addServiceUUID(BLEUUID(BLE_UUID_SERVICE));
   pAdvertising->enableScanResponse(true);
   NimBLEDevice::startAdvertising();
-
   Serial.println("NimBLE advertising as " + deviceName);
+#endif
 }
 
 void setup() {
@@ -1138,7 +1155,7 @@ void loop() {
   if (apModeRuntime) {
     broker.update();
 
-    if (elapsedSince(lastMqttRx) > 60000UL) {
+    if (elapsedSince(lastMqttRx) > 300000UL) {  // 5 min idle timeout
       Serial.println("MQTT idle timeout → BLE mode");
       prefs.begin(PREFS_NAMESPACE, false);
       prefs.putBool(PREFS_KEY_APMODE, false);

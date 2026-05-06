@@ -130,10 +130,24 @@ export function useBLETransport(options: UseBLETransportOptions) {
 				const mgr = getBleManager();
 				const scanned = await mgr.devices([deviceId]);
 				const base = scanned.length ? scanned[0] : null;
-				let dev = base
-					? await base.connect({ timeout: 10000 })
-					: await mgr.connectToDevice(deviceId, { timeout: 10000 });
-				dev = await dev.discoverAllServicesAndCharacteristics();
+				let dev: Device;
+				let lastConnErr: unknown = null;
+				for (let attempt = 0; attempt < 2; attempt++) {
+					try {
+						dev = base
+							? await base.connect({ timeout: 10000 })
+							: await mgr.connectToDevice(deviceId, { timeout: 10000 });
+						lastConnErr = null;
+						break; // success
+					} catch (connErr) {
+						lastConnErr = connErr;
+						if (attempt === 0) {
+							await new Promise((r) => setTimeout(r, 1000));
+						}
+					}
+				}
+				if (lastConnErr) throw lastConnErr;
+				dev = await dev!.discoverAllServicesAndCharacteristics();
 				try {
 					dev = await dev.requestMTU(512);
 				} catch {
@@ -209,25 +223,26 @@ export function useBLETransport(options: UseBLETransportOptions) {
 		}
 	}, []);
 
-	const readSchedulesFromCharacteristic =
-		useCallback(async (): Promise<unknown[] | null> => {
-			const dev = deviceRef.current;
-			if (!dev) return null;
-			try {
-				const ch = await dev.readCharacteristicForService(
-					FLOYD_BLE_SERVICE,
-					FLOYD_BLE_SCHEDULES,
-				);
-				if (!ch?.value) return null;
-				const bytes = toByteArray(ch.value);
-				const text = new TextDecoder().decode(bytes);
-				const parsed = JSON.parse(text) as unknown;
-				return Array.isArray(parsed) ? parsed : null;
-			} catch {
-				setError("Failed to read schedules over Bluetooth");
-				return null;
-			}
-		}, []);
+	const readSchedulesFromCharacteristic = useCallback(async (): Promise<
+		unknown[] | null
+	> => {
+		const dev = deviceRef.current;
+		if (!dev) return null;
+		try {
+			const ch = await dev.readCharacteristicForService(
+				FLOYD_BLE_SERVICE,
+				FLOYD_BLE_SCHEDULES,
+			);
+			if (!ch?.value) return null;
+			const bytes = toByteArray(ch.value);
+			const text = new TextDecoder().decode(bytes);
+			const parsed = JSON.parse(text) as unknown;
+			return Array.isArray(parsed) ? parsed : null;
+		} catch {
+			setError("Failed to read schedules over Bluetooth");
+			return null;
+		}
+	}, []);
 
 	const writeSchedulesChunked = useCallback(async (schedules: unknown[]) => {
 		const dev = deviceRef.current;
