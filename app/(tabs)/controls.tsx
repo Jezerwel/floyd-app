@@ -4,10 +4,9 @@ import { Colors } from "@/constants/Colors";
 import { useColorScheme } from "@/hooks/useColorScheme";
 import { useESP32 } from "@/hooks/useESP32Context";
 import { StatusBar } from "expo-status-bar";
-import React, { useCallback, useState } from "react";
+import React, { useState } from "react";
 import {
   Alert,
-  GestureResponderEvent,
   ScrollView,
   StyleSheet,
   Text,
@@ -17,7 +16,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-function PctSlider({
+function StepperControl({
   value,
   onValueChange,
   color,
@@ -28,52 +27,42 @@ function PctSlider({
   color: string;
   disabled?: boolean;
 }) {
-  const [barWidth, setBarWidth] = useState(0);
+  const STEP = 10;
 
-  const handlePress = useCallback(
-    (e: GestureResponderEvent) => {
-      if (disabled) return;
-      const x = e.nativeEvent.locationX;
-      const pct = Math.round(Math.max(0, Math.min(100, (x / barWidth) * 100)));
-      onValueChange(pct);
-    },
-    [barWidth, disabled, onValueChange]
-  );
+  const clamp = (v: number) => Math.max(0, Math.min(100, v));
+  const snap = (v: number) => Math.round(v / STEP) * STEP;
+
+  const decrement = () => onValueChange(clamp(snap(value - STEP)));
+  const increment = () => onValueChange(clamp(snap(value + STEP)));
 
   return (
-    <TouchableOpacity
-      activeOpacity={1}
-      onPress={handlePress}
-      onLayout={(e) => setBarWidth(e.nativeEvent.layout.width)}
-      style={[
-        styles.sliderTrack,
-        {
-          backgroundColor: color + "20",
-          opacity: disabled ? 0.5 : 1,
-        },
-      ]}
-      disabled={disabled}
-    >
-      <View
+    <View style={[styles.stepperRow, { opacity: disabled ? 0.5 : 1 }]}>
+      <TouchableOpacity
+        onPress={decrement}
+        disabled={disabled}
+        activeOpacity={0.6}
         style={[
-          styles.sliderFill,
-          {
-            backgroundColor: color,
-            width: `${value}%` as any,
-          },
+          styles.stepperButton,
+          { backgroundColor: color + "20", borderColor: color },
         ]}
-      />
-      <View
+      >
+        <Text style={[styles.stepperButtonText, { color }]}>–</Text>
+      </TouchableOpacity>
+
+      <Text style={[styles.stepperValue, { color }]}>{value}%</Text>
+
+      <TouchableOpacity
+        onPress={increment}
+        disabled={disabled}
+        activeOpacity={0.6}
         style={[
-          styles.sliderThumb,
-          {
-            backgroundColor: color,
-            left: `${value}%` as any,
-            marginLeft: -12,
-          },
+          styles.stepperButton,
+          { backgroundColor: color + "20", borderColor: color },
         ]}
-      />
-    </TouchableOpacity>
+      >
+        <Text style={[styles.stepperButtonText, { color }]}>+</Text>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -215,28 +204,20 @@ export default function ControlsScreen() {
         )}
 
         <StatCard title="Feed Speed" icon="gear" color={colors.primary}>
-          <View style={styles.sliderRow}>
-            <Text style={[styles.sliderLabel, { color: colors.text }]}>
-              {augerSpeed}%
-            </Text>
-          </View>
-          <PctSlider
+          <StepperControl
             value={augerSpeed}
             onValueChange={setAugerSpeed}
             color={colors.primary}
+            disabled={!isConnected || isFeeding}
           />
         </StatCard>
 
         <StatCard title="Spread Speed" icon="fan" color={colors.secondary}>
-          <View style={styles.sliderRow}>
-            <Text style={[styles.sliderLabel, { color: colors.text }]}>
-              {impellerSpeed}%
-            </Text>
-          </View>
-          <PctSlider
+          <StepperControl
             value={impellerSpeed}
             onValueChange={setImpellerSpeed}
             color={colors.secondary}
+            disabled={!isConnected || isFeeding}
           />
         </StatCard>
 
@@ -348,44 +329,32 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     flex: 1,
   },
-  sliderRow: {
+
+  stepperRow: {
     flexDirection: "row",
-    alignItems: "baseline",
-    gap: 8,
-    marginBottom: 12,
-  },
-  sliderLabel: {
-    fontSize: 28,
-    fontWeight: "bold",
-  },
-  sliderRaw: {
-    fontSize: 13,
-  },
-  sliderTrack: {
-    height: 32,
-    borderRadius: 16,
+    alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
+    gap: 16,
+    marginTop: 4,
   },
-  sliderFill: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    bottom: 0,
-    borderRadius: 16,
-  },
-  sliderThumb: {
-    position: "absolute",
-    width: 24,
-    height: 24,
+  stepperButton: {
+    width: 44,
+    height: 44,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: "white",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.2,
-    shadowRadius: 2,
-    elevation: 3,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stepperButtonText: {
+    fontSize: 22,
+    fontWeight: "700",
+    marginTop: -2,
+  },
+  stepperValue: {
+    fontSize: 28,
+    fontWeight: "bold",
+    minWidth: 72,
+    textAlign: "center",
   },
   inputRow: {
     flexDirection: "row",
