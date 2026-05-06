@@ -12,15 +12,17 @@ import {
 	FLOYD_BLE_TIME,
 } from "./bleConstants";
 import { getBleManager } from "./bleManager";
-import type { MQTTMessage } from "./useMQTT";
+import type { BLEMessage } from "./transportTypes";
 
 const CHUNK_PAYLOAD_MAX = 480;
 
 export interface UseBLETransportOptions {
-	onMessage?: (message: MQTTMessage) => void;
+	onMessage?: (message: BLEMessage) => void;
+	/** Called when the BLE peripheral disconnects unexpectedly. */
+	onDisconnect?: (reason: string | null) => void;
 }
 
-function parseNotifyToMessage(valueBase64: string | null): MQTTMessage | null {
+function parseNotifyToMessage(valueBase64: string | null): BLEMessage | null {
 	if (!valueBase64) return null;
 	try {
 		const bytes = toByteArray(valueBase64);
@@ -29,7 +31,7 @@ function parseNotifyToMessage(valueBase64: string | null): MQTTMessage | null {
 		if (!raw || typeof raw !== "object" || typeof raw.type !== "string")
 			return null;
 		return {
-			type: raw.type as MQTTMessage["type"],
+			type: raw.type as BLEMessage["type"],
 			data: (raw.data as Record<string, unknown> | unknown[]) ?? {},
 			timestamp: (raw.timestamp as number) ?? Date.now(),
 		};
@@ -39,14 +41,17 @@ function parseNotifyToMessage(valueBase64: string | null): MQTTMessage | null {
 }
 
 export function useBLETransport(options: UseBLETransportOptions) {
-	const { onMessage } = options;
+	const { onMessage, onDisconnect } = options;
 	const onMessageRef = useRef(onMessage);
 	onMessageRef.current = onMessage;
+	const onDisconnectRef = useRef(onDisconnect);
+	onDisconnectRef.current = onDisconnect;
 
 	const [isConnected, setIsConnected] = useState(false);
 	const [isConnecting, setIsConnecting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [bleRssi, setBleRssi] = useState<number | null>(null);
+	const [disconnectReason, setDisconnectReason] = useState<string | null>(null);
 
 	const deviceRef = useRef<Device | null>(null);
 	const subsRef = useRef<Subscription[]>([]);
@@ -103,6 +108,7 @@ export function useBLETransport(options: UseBLETransportOptions) {
 		setIsConnected(false);
 		setIsConnecting(false);
 		setBleRssi(null);
+		setDisconnectReason(null);
 		if (d) {
 			try {
 				await d.cancelConnection();
@@ -125,6 +131,7 @@ export function useBLETransport(options: UseBLETransportOptions) {
 		async (deviceId: string) => {
 			setError(null);
 			setIsConnecting(true);
+			setDisconnectReason(null);
 
 			try {
 				const mgr = getBleManager();
@@ -155,11 +162,14 @@ export function useBLETransport(options: UseBLETransportOptions) {
 				}
 				deviceRef.current = dev;
 				attachMonitors(dev);
-				disconnectSubRef.current = dev.onDisconnected(() => {
+				disconnectSubRef.current = dev.onDisconnected((err) => {
+					const reason = err?.message ?? null;
 					setIsConnected(false);
 					setBleRssi(null);
+					setDisconnectReason(reason);
 					deviceRef.current = null;
 					tearDownMonitors();
+					onDisconnectRef.current?.(reason);
 				});
 				setIsConnected(true);
 				setIsConnecting(false);
@@ -275,10 +285,6 @@ export function useBLETransport(options: UseBLETransportOptions) {
 		}
 	}, []);
 
-	const switchToAp = useCallback(async () => {
-		return writeCommandJson("switch_mode", { mode: "ap" });
-	}, [writeCommandJson]);
-
 	const refreshRssiCb = useCallback(async () => {
 		const d = deviceRef.current;
 		if (d) await refreshRssi(d);
@@ -289,6 +295,7 @@ export function useBLETransport(options: UseBLETransportOptions) {
 		isConnecting,
 		error,
 		bleRssi,
+		disconnectReason,
 		connect,
 		disconnect,
 		writeCommandJson,
@@ -296,7 +303,6 @@ export function useBLETransport(options: UseBLETransportOptions) {
 		syncTime,
 		readSchedulesFromCharacteristic,
 		writeSchedulesChunked,
-		switchToAp,
 		refreshRssi: refreshRssiCb,
 		deviceRef,
 	};

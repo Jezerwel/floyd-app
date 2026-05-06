@@ -1,163 +1,232 @@
 import { Colors } from "@/constants/Colors";
+import { rssiToBars } from "@/hooks/bleConstants";
 import { useColorScheme } from "@/hooks/useColorScheme";
-import React, { useCallback } from "react";
+import React, { useCallback, useEffect } from "react";
 import {
 	ActivityIndicator,
+	Alert,
+	LayoutAnimation,
+	Platform,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
+	UIManager,
 	View,
 } from "react-native";
-import { useESP32 } from "../hooks/useESP32Context";
 import type { DiscoveredFeederBle } from "../hooks/transportTypes";
+import { useESP32 } from "../hooks/useESP32Context";
 import { IconSymbol } from "./ui/IconSymbol";
 import { StatCard } from "./ui/StatCard";
 
+if (
+	Platform.OS === "android" &&
+	UIManager.setLayoutAnimationEnabledExperimental
+) {
+	UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+// ── signal bars component ──────────────────────────────────────────────────
+
+function SignalBars({
+	bars,
+	color,
+	muted,
+}: {
+	bars: number;
+	color: string;
+	muted: string;
+}) {
+	return (
+		<View style={signalStyles.container}>
+			{[1, 2, 3, 4].map((level) => (
+				<View
+					key={level}
+					style={[
+						signalStyles.bar,
+						{
+							height: level * 4 + 4,
+							backgroundColor: level <= bars ? color : muted,
+						},
+					]}
+				/>
+			))}
+		</View>
+	);
+}
+
+const signalStyles = StyleSheet.create({
+	container: {
+		flexDirection: "row",
+		alignItems: "flex-end",
+		gap: 2,
+	},
+	bar: {
+		width: 3,
+		borderRadius: 1.5,
+	},
+});
+
+// ── connection elapsed helper ──────────────────────────────────────────────
+
+function getElapsedMessage(elapsedMs: number): string | null {
+	if (elapsedMs < 8000) return null;
+	if (elapsedMs < 20000)
+		return "Still searching… Make sure it's powered on and nearby.";
+	return null; // >20s handled by timeout → error transition
+}
+
+// ── main component ─────────────────────────────────────────────────────────
+
 const ESP32Connection: React.FC = () => {
 	const {
-		isConnected,
-		isConnecting,
-		error,
-		connectionAttempts,
 		chipId,
-		activeTransport,
-		feederLinkPhase,
-		disconnect,
-		resetConnection,
-		setChipId,
+		connectionState,
+		connectionError,
+		connectionElapsedMs,
 		bleDevices,
-		isBleScanning,
 		bleDiscoveryError,
 		bleRssi,
-		startBleScan,
-		connectBleDevice,
-		beginApWifiFallback,
-		connectMqttToSoftAp,
+		startConnection,
+		connectToDevice,
+		retryConnection,
+		forgetFeeder,
+		disconnectBle,
 	} = useESP32();
 
 	const colorScheme = useColorScheme();
 	const colors = Colors[colorScheme === "dark" ? "dark" : "light"];
 
-	const currentApName = chipId ? `FloydFeeder-${chipId}` : "FloydFeeder-XXXX";
+	const currentFeederName = chipId ? `FloydFeeder-${chipId}` : "FloydFeeder";
 
-	const handleScanAgain = useCallback(() => {
-		void startBleScan();
-	}, [startBleScan]);
+	// Animate on state changes
+	useEffect(() => {
+		LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+	}, [connectionState]);
 
-	const handleSelectFeeder = useCallback(
+	// ── forget confirmation ───────────────────────────────────────────
+	const handleForget = useCallback(() => {
+		Alert.alert(
+			"Forget Feeder",
+			"Are you sure? You'll need to pair again next time.",
+			[
+				{ text: "Cancel", style: "cancel" },
+				{
+					text: "Forget",
+					style: "destructive",
+					onPress: () => forgetFeeder(),
+				},
+			],
+		);
+	}, [forgetFeeder]);
+
+	// ── device list item ──────────────────────────────────────────────
+	const renderDeviceRow = useCallback(
 		(item: DiscoveredFeederBle) => {
-			connectBleDevice(item.deviceId, item.chipId);
+			const bars = rssiToBars(item.rssi);
+			return (
+				<TouchableOpacity
+					key={item.deviceId}
+					style={[
+						styles.deviceRow,
+						{ backgroundColor: colors.card, borderColor: colors.border },
+					]}
+					onPress={() => connectToDevice(item.deviceId, item.chipId)}
+					accessibilityRole="button"
+					accessibilityLabel={`Connect to ${item.deviceName}`}
+				>
+					<IconSymbol
+						name="antenna.radiowaves.left.and.right"
+						size={20}
+						color={colors.primary}
+					/>
+					<View style={styles.deviceRowText}>
+						<Text style={[styles.deviceName, { color: colors.text }]}>
+							{item.deviceName}
+						</Text>
+						<View style={styles.signalRow}>
+							<SignalBars
+								bars={bars}
+								color={colors.primary}
+								muted={colors.muted}
+							/>
+							<Text style={[styles.distanceText, { color: colors.muted }]}>
+								~{item.estimatedDistanceM}m away
+							</Text>
+						</View>
+					</View>
+					<IconSymbol name="chevron.right" size={16} color={colors.muted} />
+				</TouchableOpacity>
+			);
 		},
-		[connectBleDevice],
+		[colors, connectToDevice],
 	);
 
-	const handleForgetFeeder = useCallback(() => {
-		setChipId(null);
-	}, [setChipId]);
+	// ── other feeders (when looking for stored chipId) ─────────────────
+	const otherFeeders = chipId
+		? bleDevices.filter((d) => d.chipId.toUpperCase() !== chipId.toUpperCase())
+		: [];
 
-	const handleWifiFallback = useCallback(async () => {
-		await beginApWifiFallback();
-	}, [beginApWifiFallback]);
+	// ── render by state ───────────────────────────────────────────────
 
-	return (
-		<View style={styles.container}>
-			{feederLinkPhase === "ble" && !chipId && (
+	switch (connectionState) {
+		// ── IDLE ───────────────────────────────────────────────────────
+		case "idle":
+			return (
 				<StatCard
-					title="Set Up Feeder"
-					icon="antenna.radiowaves.left.and.right"
+					title="Welcome to Floyd"
+					icon="fish.fill"
 					color={colors.primary}
 				>
 					<View style={styles.formContainer}>
 						<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
-							Power on your Floyd Feeder, enable Bluetooth, then choose it from
-							the list below.
+							Power on your Floyd Feeder and make sure Bluetooth is enabled on
+							your phone.
 						</Text>
-						{(bleDiscoveryError || error) && (
-							<View
-								style={[
-									styles.errorContainer,
-									{ backgroundColor: colors.error + "20" },
-								]}
-							>
-								<Text style={[styles.errorText, { color: colors.error }]}>
-									{bleDiscoveryError || error}
-								</Text>
-							</View>
-						)}
-						{isBleScanning ? (
-							<View style={styles.cloudInfoContainer}>
-								<ActivityIndicator size="large" color={colors.primary} />
-								<Text style={[styles.cloudTitle, { color: colors.text }]}>
-									Scanning for feeders…
-								</Text>
-							</View>
-						) : null}
-						<View style={styles.deviceList}>
-							{bleDevices.length === 0 && !isBleScanning ? (
-								<Text
-									style={[styles.cloudSubtitle, { color: colors.muted }]}
-								>
-									No feeders found yet. Tap Scan to try again.
-								</Text>
-							) : null}
-							{bleDevices.map((item) => (
-								<TouchableOpacity
-									key={item.deviceId}
-									style={[
-										styles.deviceRow,
-										{ backgroundColor: colors.card, borderColor: colors.border },
-									]}
-									onPress={() => handleSelectFeeder(item)}
-									accessibilityRole="button"
-									accessibilityLabel={`Connect to ${item.deviceName}`}
-								>
-									<IconSymbol
-										name="antenna.radiowaves.left.and.right"
-										size={20}
-										color={colors.primary}
-									/>
-									<View style={styles.deviceRowText}>
-										<Text style={[styles.deviceName, { color: colors.text }]}>
-											{item.deviceName}
-										</Text>
-										<Text style={[styles.rssiText, { color: colors.muted }]}>
-											RSSI {item.rssi} dBm
-										</Text>
-									</View>
-									<IconSymbol
-										name="chevron.right"
-										size={16}
-										color={colors.muted}
-									/>
-								</TouchableOpacity>
-							))}
+						<View
+							style={[
+								styles.calloutBox,
+								{ backgroundColor: colors.primary + "15" },
+							]}
+						>
+							<IconSymbol name="info.circle" size={16} color={colors.primary} />
+							<Text style={[styles.calloutText, { color: colors.text }]}>
+								Floyd uses Bluetooth Low Energy to communicate. Your phone will
+								ask for Bluetooth permission when you tap below.
+							</Text>
 						</View>
 						<TouchableOpacity
 							style={[
 								styles.connectButton,
 								{ backgroundColor: colors.primary },
 							]}
-							onPress={handleScanAgain}
+							onPress={startConnection}
 							accessibilityRole="button"
-							accessibilityLabel="Scan for feeders"
+							accessibilityLabel="Find my feeder"
 						>
-							<IconSymbol name="arrow.clockwise" size={18} color="white" />
-							<Text style={styles.connectButtonText}>
-								{isBleScanning ? "Scanning…" : "Scan again"}
-							</Text>
+							<IconSymbol
+								name="antenna.radiowaves.left.and.right"
+								size={18}
+								color="white"
+							/>
+							<Text style={styles.connectButtonText}>Find My Feeder</Text>
 						</TouchableOpacity>
 					</View>
 				</StatCard>
-			)}
+			);
 
-			{feederLinkPhase === "ble" && chipId && !isConnected && (
+		// ── SCANNING ───────────────────────────────────────────────────
+		case "scanning": {
+			const hasChipId = !!chipId;
+			const elapsedMsg = getElapsedMessage(connectionElapsedMs);
+
+			return (
 				<StatCard
-					title="Connecting via Bluetooth"
+					title={hasChipId ? "Looking for Your Feeder" : "Find Your Feeder"}
 					icon="antenna.radiowaves.left.and.right"
 					color={colors.warning}
 				>
 					<View style={styles.formContainer}>
-						{(error || bleDiscoveryError) && (
+						{bleDiscoveryError && (
 							<View
 								style={[
 									styles.errorContainer,
@@ -165,104 +234,121 @@ const ESP32Connection: React.FC = () => {
 								]}
 							>
 								<Text style={[styles.errorText, { color: colors.error }]}>
-									{error || bleDiscoveryError}
+									{bleDiscoveryError}
 								</Text>
-								{connectionAttempts > 0 && (
-									<Text
-										style={[styles.errorSubtext, { color: colors.error }]}
-									>
-										Attempt {connectionAttempts}
-									</Text>
-								)}
 							</View>
 						)}
+
 						<ActivityIndicator size="large" color={colors.primary} />
-						<Text style={[styles.cloudTitle, { color: colors.text }]}>
-							{isConnecting
-								? `Connecting to ${currentApName}…`
-								: `Looking for ${currentApName}…`}
-						</Text>
-						<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
-							Keep the feeder powered and nearby. You can also use direct Wi‑Fi
-							below if Bluetooth keeps failing.
-						</Text>
+
+						{hasChipId && (
+							<Text style={[styles.cloudTitle, { color: colors.text }]}>
+								Searching for {currentFeederName}…
+							</Text>
+						)}
+
+						{elapsedMsg && (
+							<Text style={[styles.cloudSubtitle, { color: colors.warning }]}>
+								{elapsedMsg}
+							</Text>
+						)}
+
+						{/* Device list */}
+						{bleDevices.length > 0 && (
+							<View style={styles.deviceList}>
+								{bleDevices.map(renderDeviceRow)}
+							</View>
+						)}
+
+						{/* Other feeders when stored chipId not found */}
+						{hasChipId &&
+							bleDevices.length === 0 &&
+							otherFeeders.length === 0 &&
+							connectionElapsedMs > 3000 && (
+								<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+									Your feeder isn't nearby. Is it powered on?
+								</Text>
+							)}
+
+						{hasChipId && otherFeeders.length > 0 && (
+							<View style={styles.otherFeedersSection}>
+								<Text
+									style={[styles.otherFeedersTitle, { color: colors.muted }]}
+								>
+									Your feeder isn't nearby, but we found:
+								</Text>
+								{otherFeeders.map(renderDeviceRow)}
+							</View>
+						)}
+
 						<TouchableOpacity
-							style={[
-								styles.connectButton,
-								{ backgroundColor: colors.primary },
-							]}
-							onPress={handleScanAgain}
+							style={[styles.connectButton, { backgroundColor: colors.muted }]}
+							onPress={disconnectBle}
 						>
-							<Text style={styles.connectButtonText}>Scan again</Text>
+							<IconSymbol name="xmark" size={16} color="white" />
+							<Text style={styles.connectButtonText}>Cancel</Text>
 						</TouchableOpacity>
 					</View>
 				</StatCard>
-			)}
+			);
+		}
 
-			{(feederLinkPhase === "wifi_instructions" ||
-				feederLinkPhase === "wifi_mqtt") &&
-				!isConnected && (
-					<StatCard
-						title="Connect via Direct Wi‑Fi"
-						icon="antenna.radiowaves.left.and.right"
-						color={colors.warning}
-					>
-						<View style={styles.formContainer}>
-							<View style={styles.cloudInfoContainer}>
-								<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
-									On your phone, open Settings → Wi‑Fi and join:
-								</Text>
-								<View
-									style={[
-										styles.apNameBadge,
-										{ backgroundColor: colors.primary + "20" },
-									]}
-								>
-									<Text style={[styles.apNameText, { color: colors.text }]}>
-										{currentApName}
-									</Text>
-								</View>
-								<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
-									Return here and tap Connect. MQTT will use
-									192.168.4.1:1883.
+		// ── CONNECTING ─────────────────────────────────────────────────
+		case "connecting":
+			return (
+				<StatCard
+					title="Connecting…"
+					icon="bolt.horizontal"
+					color={colors.warning}
+				>
+					<View style={styles.formContainer}>
+						{connectionError && (
+							<View
+								style={[
+									styles.errorContainer,
+									{ backgroundColor: colors.error + "20" },
+								]}
+							>
+								<Text style={[styles.errorText, { color: colors.error }]}>
+									{connectionError.message}
 								</Text>
 							</View>
-							{error ? (
-								<Text style={[styles.errorText, { color: colors.error }]}>
-									{error}
-								</Text>
-							) : null}
-							<TouchableOpacity
-								style={[
-									styles.connectButton,
-									{ backgroundColor: colors.primary },
-								]}
-								onPress={connectMqttToSoftAp}
-								disabled={isConnecting}
-							>
-								{isConnecting ? (
-									<>
-										<ActivityIndicator size="small" color="white" />
-										<Text style={styles.connectButtonText}>Connecting…</Text>
-									</>
-								) : (
-									<Text style={styles.connectButtonText}>Connect</Text>
-								)}
-							</TouchableOpacity>
-							<TouchableOpacity
-								style={[
-									styles.connectButton,
-									{ backgroundColor: colors.muted },
-								]}
-								onPress={disconnect}
-							>
-								<Text style={styles.connectButtonText}>Back to Bluetooth</Text>
-							</TouchableOpacity>
-						</View>
-					</StatCard>
-				)}
+						)}
 
-			{isConnected && (
+						<ActivityIndicator size="large" color={colors.primary} />
+
+						<View
+							style={[
+								styles.apNameBadge,
+								{ backgroundColor: colors.primary + "20" },
+							]}
+						>
+							<Text style={[styles.apNameText, { color: colors.text }]}>
+								{currentFeederName}
+							</Text>
+						</View>
+
+						<Text style={[styles.cloudSubtitle, { color: colors.muted }]}>
+							{connectionElapsedMs < 8000
+								? "Establishing connection…"
+								: connectionElapsedMs < 20000
+									? "Still trying… Make sure it's powered on and nearby."
+									: "Taking longer than expected. The feeder may be out of range."}
+						</Text>
+
+						<TouchableOpacity
+							style={[styles.connectButton, { backgroundColor: colors.muted }]}
+							onPress={disconnectBle}
+						>
+							<Text style={styles.connectButtonText}>Cancel</Text>
+						</TouchableOpacity>
+					</View>
+				</StatCard>
+			);
+
+		// ── CONNECTED ──────────────────────────────────────────────────
+		case "connected":
+			return (
 				<StatCard
 					title="Connected"
 					icon="checkmark.circle.fill"
@@ -277,29 +363,27 @@ const ESP32Connection: React.FC = () => {
 								]}
 							/>
 							<Text style={[styles.statusText, { color: colors.text }]}>
-								Online{chipId ? ` · ${chipId}` : ""}
+								{chipId ?? "Unknown"}
 							</Text>
 						</View>
-						<Text style={[styles.serverUrl, { color: colors.muted }]}>
-							{activeTransport === "mqtt"
-								? "Connected via direct Wi‑Fi (MQTT)"
-								: `Connected via Bluetooth${
-										bleRssi != null ? ` · RSSI ${bleRssi} dBm` : ""
-									}`}
-						</Text>
 
-						{activeTransport === "ble" && (
-							<TouchableOpacity onPress={() => void handleWifiFallback()}>
-								<Text style={[styles.linkText, { color: colors.primary }]}>
-									Connect via Wi‑Fi instead
+						{bleRssi != null && (
+							<View style={styles.signalInfo}>
+								<SignalBars
+									bars={rssiToBars(bleRssi)}
+									color={colors.primary}
+									muted={colors.muted}
+								/>
+								<Text style={[styles.signalText, { color: colors.muted }]}>
+									BLE {bleRssi} dBm
 								</Text>
-							</TouchableOpacity>
+							</View>
 						)}
 
 						<View style={styles.actionsContainer}>
 							<TouchableOpacity
 								style={[styles.actionButton, { backgroundColor: colors.error }]}
-								onPress={disconnect}
+								onPress={disconnectBle}
 								accessibilityRole="button"
 								accessibilityLabel="Disconnect"
 							>
@@ -312,7 +396,7 @@ const ESP32Connection: React.FC = () => {
 									styles.actionButton,
 									{ backgroundColor: colors.warning },
 								]}
-								onPress={resetConnection}
+								onPress={retryConnection}
 								accessibilityRole="button"
 								accessibilityLabel="Reconnect"
 							>
@@ -323,7 +407,7 @@ const ESP32Connection: React.FC = () => {
 
 						<TouchableOpacity
 							style={[styles.reconfigureButton, { borderColor: colors.muted }]}
-							onPress={handleForgetFeeder}
+							onPress={handleForget}
 							accessibilityRole="button"
 							accessibilityLabel="Forget this feeder"
 						>
@@ -334,10 +418,98 @@ const ESP32Connection: React.FC = () => {
 						</TouchableOpacity>
 					</View>
 				</StatCard>
-			)}
-		</View>
-	);
+			);
+
+		// ── ERROR ──────────────────────────────────────────────────────
+		case "error": {
+			const err = connectionError;
+			const isConnectionLost = err?.kind === "connection_lost";
+
+			return (
+				<StatCard
+					title={isConnectionLost ? "Connection Lost" : "Connection Error"}
+					icon={
+						isConnectionLost ? "wifi.slash" : "exclamationmark.triangle.fill"
+					}
+					color={colors.error}
+				>
+					<View style={styles.formContainer}>
+						{err && (
+							<View
+								style={[
+									styles.errorContainer,
+									{ backgroundColor: colors.error + "15" },
+								]}
+							>
+								<Text style={[styles.errorText, { color: colors.error }]}>
+									{err.message}
+								</Text>
+							</View>
+						)}
+
+						{err?.kind === "no_devices" && (
+							<View style={styles.troubleshootingList}>
+								<Text
+									style={[styles.troubleshootingTitle, { color: colors.text }]}
+								>
+									Troubleshooting:
+								</Text>
+								<Text
+									style={[styles.troubleshootingItem, { color: colors.muted }]}
+								>
+									• Make sure the feeder is plugged in and powered on
+								</Text>
+								<Text
+									style={[styles.troubleshootingItem, { color: colors.muted }]}
+								>
+									• Check that Bluetooth is turned on in your phone settings
+								</Text>
+								<Text
+									style={[styles.troubleshootingItem, { color: colors.muted }]}
+								>
+									• Bring your phone closer to the feeder (within 5 meters)
+								</Text>
+								<Text
+									style={[styles.troubleshootingItem, { color: colors.muted }]}
+								>
+									• Try restarting the feeder and your phone's Bluetooth
+								</Text>
+							</View>
+						)}
+
+						<TouchableOpacity
+							style={[
+								styles.connectButton,
+								{ backgroundColor: colors.primary },
+							]}
+							onPress={retryConnection}
+							accessibilityRole="button"
+							accessibilityLabel="Try again"
+						>
+							<IconSymbol name="arrow.clockwise" size={18} color="white" />
+							<Text style={styles.connectButtonText}>Try Again</Text>
+						</TouchableOpacity>
+
+						<TouchableOpacity
+							style={[styles.connectButton, { backgroundColor: colors.muted }]}
+							onPress={handleForget}
+							accessibilityRole="button"
+							accessibilityLabel="Forget this feeder"
+						>
+							<IconSymbol name="trash" size={16} color="white" />
+							<Text style={styles.connectButtonText}>Forget This Feeder</Text>
+						</TouchableOpacity>
+					</View>
+				</StatCard>
+			);
+		}
+
+		default:
+			return null;
+	}
 };
+
+// ── styles ──────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
 	container: {
@@ -351,21 +523,13 @@ const styles = StyleSheet.create({
 		fontSize: 14,
 		fontWeight: "500",
 	},
-	errorSubtext: {
-		fontSize: 12,
-		marginTop: 4,
-	},
 	formContainer: {
 		gap: 16,
-	},
-	cloudInfoContainer: {
-		alignItems: "center",
-		paddingVertical: 16,
-		gap: 8,
 	},
 	cloudTitle: {
 		fontSize: 18,
 		fontWeight: "700",
+		textAlign: "center",
 	},
 	cloudSubtitle: {
 		fontSize: 14,
@@ -375,17 +539,12 @@ const styles = StyleSheet.create({
 		paddingVertical: 10,
 		paddingHorizontal: 20,
 		borderRadius: 8,
+		alignSelf: "center",
 	},
 	apNameText: {
 		fontSize: 16,
 		fontWeight: "700",
 		fontFamily: "monospace",
-	},
-	serverUrl: {
-		fontSize: 12,
-		fontFamily: "monospace",
-		marginTop: 4,
-		textAlign: "center",
 	},
 	connectButton: {
 		flexDirection: "row",
@@ -418,6 +577,23 @@ const styles = StyleSheet.create({
 	statusText: {
 		fontSize: 16,
 		fontWeight: "600",
+	},
+	signalInfo: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
+	},
+	signalText: {
+		fontSize: 12,
+	},
+	signalRow: {
+		flexDirection: "row",
+		alignItems: "center",
+		gap: 8,
+		marginTop: 4,
+	},
+	distanceText: {
+		fontSize: 12,
 	},
 	actionsContainer: {
 		flexDirection: "row",
@@ -474,14 +650,38 @@ const styles = StyleSheet.create({
 		fontSize: 16,
 		fontWeight: "600",
 	},
-	rssiText: {
-		fontSize: 12,
-		marginTop: 2,
+	calloutBox: {
+		flexDirection: "row",
+		alignItems: "flex-start",
+		gap: 10,
+		padding: 14,
+		borderRadius: 10,
 	},
-	linkText: {
+	calloutText: {
+		flex: 1,
+		fontSize: 13,
+		lineHeight: 19,
+	},
+	otherFeedersSection: {
+		gap: 8,
+	},
+	otherFeedersTitle: {
+		fontSize: 13,
+		fontWeight: "500",
+		textAlign: "center",
+		marginBottom: 4,
+	},
+	troubleshootingList: {
+		gap: 6,
+	},
+	troubleshootingTitle: {
 		fontSize: 14,
 		fontWeight: "600",
-		marginTop: 4,
+		marginBottom: 2,
+	},
+	troubleshootingItem: {
+		fontSize: 13,
+		lineHeight: 20,
 	},
 });
 

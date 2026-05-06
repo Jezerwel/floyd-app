@@ -1,14 +1,21 @@
 import { useCallback, useRef, useState } from "react";
 import {
+	Linking,
 	PermissionsAndroid,
 	Platform,
 	type Permission,
 } from "react-native";
 import { State } from "react-native-ble-plx";
-import { chipIdFromDeviceName, FLOYD_BLE_SERVICE } from "./bleConstants";
+import {
+	chipIdFromDeviceName,
+	FLOYD_BLE_SERVICE,
+	rssiToDistanceM,
+} from "./bleConstants";
 import { getBleManager } from "./bleManager";
 import type { DiscoveredFeederBle } from "./transportTypes";
 import { useMountEffect } from "./useMountEffect";
+
+export type PermissionStatus = "unknown" | "granted" | "denied";
 
 async function ensureAndroidBlePermissions(): Promise<boolean> {
 	if (Platform.OS !== "android") return true;
@@ -23,13 +30,17 @@ async function ensureAndroidBlePermissions(): Promise<boolean> {
 		need.push(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
 	}
 	const results = await PermissionsAndroid.requestMultiple(need);
-	return Object.values(results).every((v) => v === PermissionsAndroid.RESULTS.GRANTED);
+	return Object.values(results).every(
+		(v) => v === PermissionsAndroid.RESULTS.GRANTED,
+	);
 }
 
 export function useBLEDiscovery() {
 	const [devices, setDevices] = useState<DiscoveredFeederBle[]>([]);
 	const [isScanning, setIsScanning] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [permissionStatus, setPermissionStatus] =
+		useState<PermissionStatus>("unknown");
 	const byId = useRef<Map<string, DiscoveredFeederBle>>(new Map());
 
 	const stopScan = useCallback(async () => {
@@ -42,12 +53,37 @@ export function useBLEDiscovery() {
 		setIsScanning(false);
 	}, []);
 
+	/**
+	 * Check and request Bluetooth permissions WITHOUT starting a scan.
+	 * Call this from onboarding UI before the user taps "Find My Feeder".
+	 */
+	const requestPermissions =
+		useCallback(async (): Promise<PermissionStatus> => {
+			const ok = await ensureAndroidBlePermissions();
+			const status: PermissionStatus = ok ? "granted" : "denied";
+			setPermissionStatus(status);
+			return status;
+		}, []);
+
+	/**
+	 * Open the system Settings app for this application so the user
+	 * can manually enable Bluetooth permissions.
+	 */
+	const openAppSettings = useCallback(() => {
+		if (Platform.OS === "ios") {
+			void Linking.openURL("app-settings:");
+		} else {
+			void Linking.openSettings();
+		}
+	}, []);
+
 	const startScan = useCallback(async () => {
 		setError(null);
 		const ok = await ensureAndroidBlePermissions();
+		setPermissionStatus(ok ? "granted" : "denied");
 		if (!ok) {
 			setError(
-				"Bluetooth or location permission was denied. Enable permissions in system settings to scan for feeders.",
+				"Bluetooth permission was denied. Open system settings to grant access.",
 			);
 			return;
 		}
@@ -87,14 +123,21 @@ export function useBLEDiscovery() {
 				const chipId = chipIdFromDeviceName(name ?? null);
 				if (!chipId) return;
 
+				const rssi = device.rssi ?? -100;
 				const next: DiscoveredFeederBle = {
 					deviceId: device.id,
 					deviceName: name ?? `FloydFeeder-${chipId}`,
-					rssi: device.rssi ?? -100,
+					rssi,
 					chipId,
+					estimatedDistanceM: rssiToDistanceM(rssi),
 				};
 				byId.current.set(device.id, next);
-				setDevices(Array.from(byId.current.values()));
+
+				// Sort by estimated distance (closest first)
+				const sorted = Array.from(byId.current.values()).sort(
+					(a, b) => a.estimatedDistanceM - b.estimatedDistanceM,
+				);
+				setDevices(sorted);
 			},
 		);
 	}, []);
@@ -115,8 +158,11 @@ export function useBLEDiscovery() {
 		devices,
 		isScanning,
 		error,
+		permissionStatus,
 		startScan,
 		stopScan,
 		clearDiscovered,
+		requestPermissions,
+		openAppSettings,
 	};
 }
