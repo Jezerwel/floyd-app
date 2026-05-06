@@ -1,0 +1,11 @@
+# Do not upload local Android build output. It contains `build/generated/autolinking/autolinking.json`
+# with absolute Windows paths; EAS runs on Linux and Gradle would use those paths unchanged and fail
+# (e.g. :react-native-worklets with projectDir under .../android/C:/Users/...).
+android/build
+android/app/build
+android/.gradle
+ios/build
+**/Pods
+
+# Dependencies are installed during the EAS Build job; omitting them shrinks the archive a lot.
+node_modules
