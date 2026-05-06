@@ -37,7 +37,7 @@ graph TB
 
 ## 2. Data Flow
 
-**BLE:** Floyd service `4fafc201-1fb5-459e-8fcc-c5c9c331914b` with characteristics `…91401`–`…91408` (command, response, telemetry, status, schedules, config, time, feed log). Command writes mirror MQTT command JSON: `{ action, parameters, timestamp }`. Notifications carry the same payloads as MQTT topic messages.
+**BLE:** Floyd service `4fafc201-1fb5-459e-8fcc-c5c9c331914b` with characteristics `…9141`–`…9148` (command, response, telemetry, status, schedules, config, time, feed log). Command writes mirror MQTT command JSON: `{ action, parameters, timestamp }`. Notifications carry the same payloads as MQTT topic messages.
 
 **MQTT (fallback only):** Topics under `floyd/devices/{chipId}/`:
 

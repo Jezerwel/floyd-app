@@ -9,14 +9,14 @@
 #include <sys/time.h>
 
 #define BLE_UUID_SERVICE      "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define BLE_UUID_COMMAND      "4fafc201-1fb5-459e-8fcc-c5c9c33191401"
-#define BLE_UUID_RESPONSE     "4fafc201-1fb5-459e-8fcc-c5c9c33191402"
-#define BLE_UUID_TELEMETRY    "4fafc201-1fb5-459e-8fcc-c5c9c33191403"
-#define BLE_UUID_STATUS       "4fafc201-1fb5-459e-8fcc-c5c9c33191404"
-#define BLE_UUID_SCHEDULES    "4fafc201-1fb5-459e-8fcc-c5c9c33191405"
-#define BLE_UUID_CONFIG       "4fafc201-1fb5-459e-8fcc-c5c9c33191406"
-#define BLE_UUID_TIME         "4fafc201-1fb5-459e-8fcc-c5c9c33191407"
-#define BLE_UUID_FEEDLOG      "4fafc201-1fb5-459e-8fcc-c5c9c33191408"
+#define BLE_UUID_COMMAND      "4fafc201-1fb5-459e-8fcc-c5c9c3319141"
+#define BLE_UUID_RESPONSE     "4fafc201-1fb5-459e-8fcc-c5c9c3319142"
+#define BLE_UUID_TELEMETRY    "4fafc201-1fb5-459e-8fcc-c5c9c3319143"
+#define BLE_UUID_STATUS       "4fafc201-1fb5-459e-8fcc-c5c9c3319144"
+#define BLE_UUID_SCHEDULES    "4fafc201-1fb5-459e-8fcc-c5c9c3319145"
+#define BLE_UUID_CONFIG       "4fafc201-1fb5-459e-8fcc-c5c9c3319146"
+#define BLE_UUID_TIME         "4fafc201-1fb5-459e-8fcc-c5c9c3319147"
+#define BLE_UUID_FEEDLOG      "4fafc201-1fb5-459e-8fcc-c5c9c3319148"
 
 #define PREFS_NAMESPACE   "floyd-cfg"
 #define PREFS_KEY_CFG     "cfg"

@@ -3,7 +3,6 @@ import { useColorScheme } from "@/hooks/useColorScheme";
 import React, { useCallback } from "react";
 import {
 	ActivityIndicator,
-	FlatList,
 	StyleSheet,
 	Text,
 	TouchableOpacity,
@@ -93,21 +92,17 @@ const ESP32Connection: React.FC = () => {
 								</Text>
 							</View>
 						) : null}
-						<FlatList
-							data={bleDevices}
-							keyExtractor={(i) => i.deviceId}
-							style={styles.deviceList}
-							ListEmptyComponent={
-								!isBleScanning ? (
-									<Text
-										style={[styles.cloudSubtitle, { color: colors.muted }]}
-									>
-										No feeders found yet. Tap Scan to try again.
-									</Text>
-								) : null
-							}
-							renderItem={({ item }) => (
+						<View style={styles.deviceList}>
+							{bleDevices.length === 0 && !isBleScanning ? (
+								<Text
+									style={[styles.cloudSubtitle, { color: colors.muted }]}
+								>
+									No feeders found yet. Tap Scan to try again.
+								</Text>
+							) : null}
+							{bleDevices.map((item) => (
 								<TouchableOpacity
+									key={item.deviceId}
 									style={[
 										styles.deviceRow,
 										{ backgroundColor: colors.card, borderColor: colors.border },
@@ -135,8 +130,8 @@ const ESP32Connection: React.FC = () => {
 										color={colors.muted}
 									/>
 								</TouchableOpacity>
-							)}
-						/>
+							))}
+						</View>
 						<TouchableOpacity
 							style={[
 								styles.connectButton,
@@ -461,7 +456,6 @@ const styles = StyleSheet.create({
 		fontWeight: "500",
 	},
 	deviceList: {
-		maxHeight: 220,
 		width: "100%",
 	},
 	deviceRow: {
