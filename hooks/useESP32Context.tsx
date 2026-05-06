@@ -10,6 +10,7 @@ import React, {
 	useState,
 } from "react";
 import { AppState } from "react-native";
+import { makeLocalId } from "../utils/localId";
 import { useBLEDiscovery } from "./useBLEDiscovery";
 import { useBLETransport } from "./useBLETransport";
 import useMQTT, { type MQTTMessage } from "./useMQTT";
@@ -93,6 +94,7 @@ export interface ESP32ContextType {
 	clearJam: (speed?: number, duration?: number) => void;
 	setSensorReadingInterval: (interval: number) => boolean;
 	requestSensorData: () => boolean;
+	reloadSchedules: () => Promise<boolean>;
 	isAutoRefreshEnabled: boolean;
 	setAutoRefreshEnabled: (enabled: boolean) => void;
 	autoRefreshInterval: number;
@@ -100,7 +102,7 @@ export interface ESP32ContextType {
 	esp32Status: "connected" | "disconnected" | "unknown";
 	feedLogs: FeedLogEntry[];
 	setFeedLogs: (logs: FeedLogEntry[]) => void;
-	publishScheduleSync: (schedules: Schedule[]) => boolean;
+	publishScheduleSync: (schedules: Schedule[]) => Promise<boolean>;
 	bleDevices: DiscoveredFeederBle[];
 	isBleScanning: boolean;
 	bleDiscoveryError: string | null;
@@ -163,49 +165,51 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 
 	const handleMessage = useCallback((message: MQTTMessage) => {
 		switch (message.type) {
-			case "sensor_data":
+			case "sensor_data": {
+				const d = message.data as Record<string, unknown>;
 				setDeviceData((prev) => ({
 					...prev,
-					temperature: (message.data.temperature as number) ?? prev.temperature,
-					distance: (message.data.distance as number) ?? prev.distance,
+					temperature: (d.temperature as number) ?? prev.temperature,
+					distance: (d.distance as number) ?? prev.distance,
 					foodLevelPercentage:
-						(message.data.foodLevelPercentage as number) ??
-						prev.foodLevelPercentage,
+						(d.foodLevelPercentage as number) ?? prev.foodLevelPercentage,
 					temperatureSensorConnected:
-						(message.data.temperatureSensorConnected as boolean) ??
+						(d.temperatureSensorConnected as boolean) ??
 						prev.temperatureSensorConnected,
 					ultrasonicSensorConnected:
-						(message.data.ultrasonicSensorConnected as boolean) ??
+						(d.ultrasonicSensorConnected as boolean) ??
 						prev.ultrasonicSensorConnected,
 					motorState:
-						(message.data.motorState as ESP32Data["motorState"]) ||
+						(d.motorState as ESP32Data["motorState"]) ||
 						prev.motorState ||
 						"idle",
-					augerSpeed: (message.data.augerSpeed as number) ?? prev.augerSpeed,
-					impellerSpeed:
-						(message.data.impellerSpeed as number) ?? prev.impellerSpeed,
+					augerSpeed: (d.augerSpeed as number) ?? prev.augerSpeed,
+					impellerSpeed: (d.impellerSpeed as number) ?? prev.impellerSpeed,
 					lastUpdate: message.timestamp,
 					esp32Connected: true,
 				}));
 				break;
+			}
 			case "control_response": {
+				const d = message.data as Record<string, unknown>;
 				setDeviceData((prev) => ({
 					...prev,
 					motorState:
-						(message.data.motorState as ESP32Data["motorState"]) ??
-						prev.motorState,
+						(d.motorState as ESP32Data["motorState"]) ?? prev.motorState,
 					lastUpdate: message.timestamp,
 					esp32Connected: true,
 				}));
 
-				if (message.data.action === "feed_complete") {
+				if (d.action === "feed_complete") {
 					const newEntry: FeedLogEntry = {
-						id: Date.now().toString(36),
+						id: makeLocalId(),
 						timestamp: new Date().toISOString(),
-						augerSpeed: (message.data.augerSpeed as number) || 768,
-						impellerSpeed: (message.data.impellerSpeed as number) || 1023,
-						feedMs: (message.data.feedMs as number) || 3000,
-						success: (message.data.success as boolean) !== false,
+						augerSpeed:
+							typeof d.augerSpeed === "number" ? d.augerSpeed : 768,
+						impellerSpeed:
+							typeof d.impellerSpeed === "number" ? d.impellerSpeed : 1023,
+						feedMs: typeof d.feedMs === "number" ? d.feedMs : 3000,
+						success: (d.success as boolean) !== false,
 					};
 					setFeedLogsState((prev) => {
 						const next = [newEntry, ...prev].slice(0, 100);
@@ -215,16 +219,18 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 				}
 				break;
 			}
-			case "status":
+			case "status": {
+				const d = message.data as Record<string, unknown>;
 				setDeviceData((prev) => ({
 					...prev,
 					feederConfig:
-						(message.data.feederConfig as FeederConfig) ?? prev.feederConfig,
-					wifiRssi: (message.data.wifiRssi as number) ?? prev.wifiRssi,
+						(d.feederConfig as FeederConfig) ?? prev.feederConfig,
+					wifiRssi: (d.wifiRssi as number) ?? prev.wifiRssi,
 					lastUpdate: message.timestamp,
-					esp32Connected: (message.data.connected as boolean) !== false,
+					esp32Connected: (d.connected as boolean) !== false,
 				}));
 				break;
+			}
 			case "schedules_list": {
 				const raw = message.data;
 				setDeviceData((prev) => ({
@@ -480,7 +486,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 	}, []);
 
 	const publishScheduleSync = useCallback(
-		(schedules: Schedule[]): boolean => {
+		async (schedules: Schedule[]): Promise<boolean> => {
 			if (
 				(feederLinkPhase === "wifi_mqtt" ||
 					feederLinkPhase === "wifi_instructions") &&
@@ -494,8 +500,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 				});
 			}
 			if (ble.isConnected) {
-				void ble.writeSchedulesChunked(schedules as unknown[]);
-				return true;
+				return await ble.writeSchedulesChunked(schedules as unknown[]);
 			}
 			return false;
 		},
@@ -508,6 +513,38 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 			ble.writeSchedulesChunked,
 		],
 	);
+
+	const reloadSchedules = useCallback(async (): Promise<boolean> => {
+		if (
+			(feederLinkPhase === "wifi_mqtt" ||
+				feederLinkPhase === "wifi_instructions") &&
+			mqttConnected &&
+			chipId
+		) {
+			return publishCommand("get_schedules");
+		}
+		if (feederLinkPhase === "ble" && ble.isConnected) {
+			const list = await ble.readSchedulesFromCharacteristic();
+			if (list !== null) {
+				handleMessage({
+					type: "schedules_list",
+					data: list,
+					timestamp: Date.now(),
+				});
+				return true;
+			}
+			return false;
+		}
+		return false;
+	}, [
+		feederLinkPhase,
+		mqttConnected,
+		chipId,
+		publishCommand,
+		ble.isConnected,
+		ble.readSchedulesFromCharacteristic,
+		handleMessage,
+	]);
 
 	const beginApWifiFallback = useCallback(async () => {
 		if (!ble.isConnected) return;
@@ -546,6 +583,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 			clearJam,
 			setSensorReadingInterval,
 			requestSensorData,
+			reloadSchedules,
 			isAutoRefreshEnabled,
 			setAutoRefreshEnabled,
 			autoRefreshInterval,
@@ -584,6 +622,7 @@ export const ESP32Provider: React.FC<ESP32ProviderProps> = ({
 			clearJam,
 			setSensorReadingInterval,
 			requestSensorData,
+			reloadSchedules,
 			isAutoRefreshEnabled,
 			autoRefreshInterval,
 			esp32Status,

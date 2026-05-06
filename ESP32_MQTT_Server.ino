@@ -205,6 +205,19 @@ void saveSchedules() {
   Serial.printf("Saved %d schedules to NVS\n", scheduleStore.count);
 }
 
+/** True if csv is a comma-separated list of weekday ints 0–6 containing dow (tm_wday). */
+static bool dowInCsv(const char *csv, int dow) {
+  if (!csv || *csv == '\0') return false;
+  for (const char *p = csv; *p;) {
+    int val = atoi(p);
+    if (val == dow) return true;
+    while (*p && *p != ',') p++;
+    if (*p == ',') p++;
+    while (*p == ' ' || *p == '\t') p++;
+  }
+  return false;
+}
+
 void checkSchedules() {
   if (!isTimeSynced()) return;
 
@@ -222,8 +235,7 @@ void checkSchedules() {
 
     if (strcmp(sch.time, nowTime) != 0) continue;
 
-    String days = String(sch.daysOfWeek);
-    if (days.indexOf(String(nowDow)) < 0) continue;
+    if (!dowInCsv(sch.daysOfWeek, nowDow)) continue;
 
     if (sch.lastFired != 0) {
       unsigned long nowMillis = millis();
@@ -589,12 +601,15 @@ void sendDeviceStatus(uint8_t num) {
 }
 
 void sendFeedingComplete() {
-  StaticJsonDocument<256> doc;
+  StaticJsonDocument<384> doc;
   doc["type"] = "control_response";
   JsonObject data = doc.createNestedObject("data");
   data["action"]     = "feed_complete";
   data["success"]    = true;
   data["motorState"] = motorStateLabel(motor.state);
+  data["augerSpeed"]    = motor.augerSpeed;
+  data["impellerSpeed"] = motor.impellerSpeed;
+  data["feedMs"]        = motor.feedMs;
   doc["timestamp"]   = millis();
   broadcastResponse(doc);
   notifyBle(bleFeedlogChar, pendingResponse);

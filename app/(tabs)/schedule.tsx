@@ -5,7 +5,7 @@ import { useScheduleMQTT, type Schedule } from "@/hooks/useScheduleMQTT";
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from "@react-native-community/datetimepicker";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -21,6 +21,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+import { makeLocalId } from "../../utils/localId";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 function timeStringToDate(time: string): Date {
@@ -78,6 +79,21 @@ export default function ScheduleScreen() {
   const [saving, setSaving] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [pickerDate, setPickerDate] = useState(new Date());
+
+  const scheduleListRows = useMemo(() => {
+    const filtered = mqttSchedules.filter(
+      (s): s is Schedule => !!s && !!s.id,
+    );
+    const countById = filtered.reduce<Record<string, number>>((acc, s) => {
+      acc[s.id] = (acc[s.id] ?? 0) + 1;
+      return acc;
+    }, {});
+    const anyDup = Object.values(countById).some((c) => c > 1);
+    return filtered.map((item, index) => ({
+      rowKey: anyDup ? `${item.id}:${index}` : item.id,
+      schedule: item,
+    }));
+  }, [mqttSchedules]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -140,7 +156,7 @@ export default function ScheduleScreen() {
       .join(",");
   };
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     if (!formLabel.trim()) {
       Alert.alert("Validation", "Please enter a label.");
       return;
@@ -158,7 +174,7 @@ export default function ScheduleScreen() {
     try {
       const updatedSchedules = [...mqttSchedules];
       const newSchedule: Schedule = {
-        id: editingId || Date.now().toString(16),
+        id: editingId || makeLocalId(),
         label: formLabel.trim(),
         time: formTime,
         daysOfWeek: boolToDaysOfWeek(formDays),
@@ -178,7 +194,14 @@ export default function ScheduleScreen() {
         updatedSchedules.push(newSchedule);
       }
 
-      pushSchedules(updatedSchedules);
+      const ok = await pushSchedules(updatedSchedules);
+      if (!ok) {
+        Alert.alert(
+          "Could not save",
+          "The feeder did not accept the schedule. Check Bluetooth or Wi‑Fi and try again.",
+        );
+        return;
+      }
       setShowModal(false);
       resetForm();
     } catch {
@@ -188,11 +211,17 @@ export default function ScheduleScreen() {
     }
   }, [formLabel, formTime, formDays, formEnabled, editingId, resetForm, mqttSchedules, pushSchedules]);
 
-  const handleToggleEnabled = useCallback((schedule: Schedule) => {
+  const handleToggleEnabled = useCallback(async (schedule: Schedule) => {
     const updatedSchedules = mqttSchedules.map((s) =>
       s.id === schedule.id ? { ...s, enabled: !s.enabled } : s,
     );
-    pushSchedules(updatedSchedules);
+    const ok = await pushSchedules(updatedSchedules);
+    if (!ok) {
+      Alert.alert(
+        "Could not update",
+        "The feeder did not accept the change. Check your connection.",
+      );
+    }
   }, [mqttSchedules, pushSchedules]);
 
   const handleDelete = useCallback((schedule: Schedule) => {
@@ -204,11 +233,17 @@ export default function ScheduleScreen() {
         {
           text: "Delete",
           style: "destructive",
-          onPress: () => {
+          onPress: async () => {
             const updatedSchedules = mqttSchedules.filter(
               (s) => s.id !== schedule.id,
             );
-            pushSchedules(updatedSchedules);
+            const ok = await pushSchedules(updatedSchedules);
+            if (!ok) {
+              Alert.alert(
+                "Could not delete",
+                "The feeder did not accept the update. Check your connection.",
+              );
+            }
           },
         },
       ],
@@ -216,12 +251,13 @@ export default function ScheduleScreen() {
   }, [mqttSchedules, pushSchedules]);
 
   const renderScheduleItem = useCallback(
-    ({ item }: { item: Schedule }) => {
-      const itemDays = daysOfWeekToBool(item.daysOfWeek);
+    ({ item }: { item: { rowKey: string; schedule: Schedule } }) => {
+      const sch = item.schedule;
+      const itemDays = daysOfWeekToBool(sch.daysOfWeek);
       return (
       <Pressable
-        onPress={() => openEditModal(item)}
-        onLongPress={() => handleDelete(item)}
+        onPress={() => openEditModal(sch)}
+        onLongPress={() => handleDelete(sch)}
         style={({ pressed }) => [
           styles.scheduleCard,
           {
@@ -234,23 +270,23 @@ export default function ScheduleScreen() {
         <View style={styles.scheduleRow}>
           <View style={styles.scheduleInfo}>
             <Text style={[styles.scheduleLabel, { color: colors.text }]}>
-              {item.label}
+              {sch.label}
             </Text>
             <Text style={[styles.scheduleTime, { color: colors.primary }]}>
-              {formatTimeDisplay(item.time)}
+              {formatTimeDisplay(sch.time)}
             </Text>
           </View>
           <Switch
-            value={item.enabled}
-            onValueChange={() => handleToggleEnabled(item)}
+            value={sch.enabled}
+            onValueChange={() => handleToggleEnabled(sch)}
             trackColor={{ false: colors.border, true: colors.primary + "60" }}
-            thumbColor={item.enabled ? colors.primary : colors.muted}
+            thumbColor={sch.enabled ? colors.primary : colors.muted}
           />
         </View>
         <View style={styles.daysRow}>
           {DAY_LABELS.map((day, i) => (
             <View
-              key={i}
+              key={`${day}.${i}`}
               style={[
                 styles.dayTag,
                 {
@@ -291,8 +327,8 @@ export default function ScheduleScreen() {
 
       {!_loading && (
         <FlatList
-          data={mqttSchedules.filter((s): s is Schedule => !!s && !!s.id)}
-          keyExtractor={(item) => item.id}
+          data={scheduleListRows}
+          keyExtractor={(row) => row.rowKey}
           renderItem={renderScheduleItem}
           contentContainerStyle={styles.listContent}
           refreshControl={

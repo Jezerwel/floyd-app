@@ -19,7 +19,8 @@ export interface MQTTMessage {
 		| "error"
 		| "status"
 		| "schedules_list";
-	data: Record<string, unknown>;
+	/** Responses like schedules_list attach a JSON array here; others use objects. */
+	data: Record<string, unknown> | unknown[];
 	timestamp: number;
 }
 
@@ -154,9 +155,19 @@ const useMQTT = (deviceChipId: string | null, options: UseMQTTOptions = {}) => {
 				const msg = raw as Record<string, unknown>;
 				if (typeof msg.type !== "string") return;
 
+				const rawData = msg.data;
+				const data: MQTTMessage["data"] =
+					rawData === undefined || rawData === null
+						? {}
+						: Array.isArray(rawData)
+							? rawData
+							: typeof rawData === "object"
+								? (rawData as Record<string, unknown>)
+								: {};
+
 				const parsed: MQTTMessage = {
 					type: msg.type as MQTTMessage["type"],
-					data: msg.data as Record<string, unknown>,
+					data,
 					timestamp: (msg.timestamp as number) ?? Date.now(),
 				};
 

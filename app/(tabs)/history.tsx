@@ -360,9 +360,9 @@ export default function LogsScreen() {
             color={colors.accent}
           >
             {feedLogs.length > 0 ? (
-              feedLogs.map((log) => (
+              feedLogs.map((log, logIndex) => (
                 <View
-                  key={log.id}
+                  key={`${log.id}-${logIndex}`}
                   style={[styles.logItem, { backgroundColor: colors.card, borderColor: colors.border }]}
                 >
                   <View style={styles.logHeader}>

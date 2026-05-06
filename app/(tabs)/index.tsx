@@ -45,6 +45,7 @@ export default function DashboardScreen() {
   const colors = Colors[colorScheme as keyof typeof Colors];
 
   const {
+    activeTransport,
     deviceData,
     isConnected,
     isConnecting,
@@ -397,45 +398,53 @@ export default function DashboardScreen() {
         </StatCard>
 
         <View style={styles.statsRow}>
-          <StatCard
-            title="Water Temp"
-            value={
-              temperature !== null && temperature !== undefined
-                ? temperature.toFixed(1)
-                : "--"
-            }
-            unit={temperature !== null && temperature !== undefined ? "°C" : ""}
-            icon="thermometer"
-            color={
-              isTemperatureSensorConnected ? colors.secondary : colors.error
-            }
-          />
-          <StatCard title="WiFi Signal" icon="wifi" color={colors.primary}>
-            <View style={styles.wifiContainer}>
-              <View style={styles.wifiSignal}>
-                {[1, 2, 3, 4].map((bar) => (
-                  <View
-                    key={bar}
-                    style={[
-                      styles.wifiBar,
-                      {
-                        height: bar * 5 + 5,
-                        backgroundColor:
-                          wifiRating && bar <= wifiRating.bars
-                            ? colors.primary
-                            : colors.muted,
-                      },
-                    ]}
-                  />
-                ))}
-              </View>
-              <Text style={[styles.wifiSignalText, { color: colors.text }]}>
-                {hasWifiRssi
-                  ? `${wifiRssi} dBm · ${wifiRating!.label}`
-                  : "No signal"}
-              </Text>
+          <View style={styles.statsRowItem}>
+            <StatCard
+              title="Water Temp"
+              value={
+                temperature !== null && temperature !== undefined
+                  ? temperature.toFixed(1)
+                  : "--"
+              }
+              unit={
+                temperature !== null && temperature !== undefined ? "°C" : ""
+              }
+              icon="thermometer"
+              color={
+                isTemperatureSensorConnected ? colors.secondary : colors.error
+              }
+            />
+          </View>
+          {activeTransport === "mqtt" && (
+            <View style={styles.statsRowItem}>
+              <StatCard title="WiFi Signal" icon="wifi" color={colors.primary}>
+                <View style={styles.wifiContainer}>
+                  <View style={styles.wifiSignal}>
+                    {[1, 2, 3, 4].map((bar) => (
+                      <View
+                        key={bar}
+                        style={[
+                          styles.wifiBar,
+                          {
+                            height: bar * 5 + 5,
+                            backgroundColor:
+                              wifiRating && bar <= wifiRating.bars
+                                ? colors.primary
+                                : colors.muted,
+                          },
+                        ]}
+                      />
+                    ))}
+                  </View>
+                  <Text style={[styles.wifiSignalText, { color: colors.text }]}>
+                    {hasWifiRssi
+                      ? `${wifiRssi} dBm · ${wifiRating!.label}`
+                      : "No signal"}
+                  </Text>
+                </View>
+              </StatCard>
             </View>
-          </StatCard>
+          )}
         </View>
 
         <StatCard
@@ -598,6 +607,10 @@ const styles = StyleSheet.create({
   statsRow: {
     flexDirection: "row",
     gap: 12,
+  },
+  statsRowItem: {
+    flex: 1,
+    minWidth: 0,
   },
   wifiContainer: {
     alignItems: "center",

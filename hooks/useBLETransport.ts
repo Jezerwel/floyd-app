@@ -30,7 +30,7 @@ function parseNotifyToMessage(valueBase64: string | null): MQTTMessage | null {
 			return null;
 		return {
 			type: raw.type as MQTTMessage["type"],
-			data: (raw.data as Record<string, unknown>) ?? {},
+			data: (raw.data as Record<string, unknown> | unknown[]) ?? {},
 			timestamp: (raw.timestamp as number) ?? Date.now(),
 		};
 	} catch {
@@ -209,6 +209,26 @@ export function useBLETransport(options: UseBLETransportOptions) {
 		}
 	}, []);
 
+	const readSchedulesFromCharacteristic =
+		useCallback(async (): Promise<unknown[] | null> => {
+			const dev = deviceRef.current;
+			if (!dev) return null;
+			try {
+				const ch = await dev.readCharacteristicForService(
+					FLOYD_BLE_SERVICE,
+					FLOYD_BLE_SCHEDULES,
+				);
+				if (!ch?.value) return null;
+				const bytes = toByteArray(ch.value);
+				const text = new TextDecoder().decode(bytes);
+				const parsed = JSON.parse(text) as unknown;
+				return Array.isArray(parsed) ? parsed : null;
+			} catch {
+				setError("Failed to read schedules over Bluetooth");
+				return null;
+			}
+		}, []);
+
 	const writeSchedulesChunked = useCallback(async (schedules: unknown[]) => {
 		const dev = deviceRef.current;
 		if (!dev) return false;
@@ -259,6 +279,7 @@ export function useBLETransport(options: UseBLETransportOptions) {
 		writeCommandJson,
 		writeCommandPayload,
 		syncTime,
+		readSchedulesFromCharacteristic,
 		writeSchedulesChunked,
 		switchToAp,
 		refreshRssi: refreshRssiCb,
