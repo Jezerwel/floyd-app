@@ -158,6 +158,8 @@ void flushPendingResponseTransport();
 void notifyBle(NimBLECharacteristic *ch, const String &json);
 bool buildDeviceStatusJson(JsonDocument &doc);
 const char *motorStateLabel(MotorState st);
+void startFeeding(int augerSpeed, int impellerSpeed, unsigned long preSpinMs, unsigned long feedMs, unsigned long postSpinMs);
+void stopAllMotors();
 
 bool isTimeSynced() {
   time_t t = time(nullptr);
