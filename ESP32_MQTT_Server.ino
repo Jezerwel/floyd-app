@@ -770,20 +770,26 @@ static void onBleTimeWrite(const std::string &raw) {
   Serial.printf("Time sync: %lu\n", (unsigned long)unixTs);
 }
 
-// Forward declaration for re-advertising after disconnect
+// Forward declarations/state for re-advertising after disconnect
 static void restartAdvertising();
+static volatile bool bleRestartAdvertisingRequested = false;
+static volatile unsigned long bleRestartAdvertisingAt = 0;
 
 class FloydBLEServerCallbacks : public NimBLEServerCallbacks {
-  void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int reason) override {
+  void onConnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo) override {
+    (void)pServer;
     (void)connInfo;
-    (void)reason;
+    bleRestartAdvertisingRequested = false;
+    Serial.println("BLE client connected");
+  }
+
+  void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo, int reason) override {
+    (void)pServer;
+    (void)connInfo;
     resetScheduleChunkState();
-    Serial.printf("BLE client disconnected (reason=%d), restarting advertising...\n", reason);
-    // Restart advertising so the client can reconnect without a full reboot.
-    // NimBLE does NOT auto-advertise after a disconnect by default.
-    pServer->startAdvertising();
-    // For extended advertising (Coded PHY), also restart the ext adv instance.
-    restartAdvertising();
+    Serial.printf("BLE client disconnected (reason=%d), scheduling advertising restart...\n", reason);
+    bleRestartAdvertisingRequested = true;
+    bleRestartAdvertisingAt = millis() + 250;
   }
 };
 
@@ -1050,13 +1056,17 @@ static NimBLEExtAdvertising *g_pExtAdvertising = nullptr;
 static void restartAdvertising() {
 #ifdef CONFIG_BT_NIMBLE_EXT_ADV
   if (g_pExtAdvertising) {
-    g_pExtAdvertising->start();
-    Serial.println("NimBLE ExtAdvertising restarted");
+    bool started = g_pExtAdvertising->start();
+    Serial.println(
+      started ? "NimBLE ExtAdvertising restarted" : "NimBLE ExtAdvertising restart failed"
+    );
   }
 #else
   if (g_pAdvertising) {
-    g_pAdvertising->start();
-    Serial.println("NimBLE advertising restarted");
+    bool started = g_pAdvertising->start();
+    Serial.println(
+      started ? "NimBLE advertising restarted" : "NimBLE advertising restart failed"
+    );
   }
 #endif
 }
@@ -1068,8 +1078,6 @@ void initBleStack(const String &deviceName) {
   FloydBLEServerCallbacks *srvCb = new FloydBLEServerCallbacks();
   NimBLEServer *pServer = NimBLEDevice::createServer();
   pServer->setCallbacks(srvCb);
-  // Auto-restart advertising when a client disconnects
-  pServer->advertiseOnDisconnect(true);
 
   NimBLEService *pService = pServer->createService(BLEUUID(BLE_UUID_SERVICE));
 
@@ -1204,6 +1212,15 @@ void loop() {
   }
 
   flushPendingResponseTransport();
+
+  if (
+    !apModeRuntime &&
+    bleRestartAdvertisingRequested &&
+    (long)(millis() - bleRestartAdvertisingAt) >= 0
+  ) {
+    bleRestartAdvertisingRequested = false;
+    restartAdvertising();
+  }
 
   updateMotorState();
 
